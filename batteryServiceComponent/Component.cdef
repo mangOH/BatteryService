@@ -1,0 +1,28 @@
+
+sources:
+{
+    batteryService.c
+    batteryUtils.c
+}
+
+cflags:
+{
+    -std=c99
+}
+
+requires:
+{
+    api:
+    {
+        le_cfg.api
+    }
+}
+
+provides:
+{
+    api:
+    {
+        $CURDIR/../ma_battery.api
+        $CURDIR/../ma_adminbattery.api
+    }
+}

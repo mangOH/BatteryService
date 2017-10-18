@@ -1,0 +1,55 @@
+//--------------------------------------------------------------------------------------------------
+/**
+ * @page c_battery mangOH Battery API
+ *
+ * @ref ma_battery_interface.h "API Reference" <br>
+ * @subpage howToBattery "How To Setup Battery" <br>
+ *
+ * <HR>
+ *
+ * @section battery_overview Overview
+ *
+ * This API is used by apps to monitor how a battery is being used. 
+ *
+ * @section battery_usage Usage
+ *
+ * The sample code in this section shows how to use the Battery API in a user space app
+ * written in C.
+ *
+ * ma_battery_GetTechnology() provides info on the battery technology. It returns the
+ * battery type (e.g., Lithium-Polymer), the capacity, and voltage.
+ * The entries are the battery type as a string, battery capacity in mAh and voltage in mV
+ * 
+ * @code
+ *   ma_battery_SetTechnology("LiPo", 3000, 3700);
+ * @endcode
+ *
+ * Copyright (C) Sierra Wireless Inc.
+ */
+//--------------------------------------------------------------------------------------------------
+/**
+ * @file ma_adminbattery_interface.h
+ *
+ * Legato @ref c_ma_adminbattery include file.
+ *
+ * Copyright (C) Sierra Wireless Inc.
+ */
+//--------------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------
+/**
+ * Configures the battery settings. 
+ * We only support Li-Po or Li-Ion battery for now.
+ * Any other value will return in error. 
+ * Specify the current rating for the battery based on datasheet
+ *
+ *      This function should be called before any of the Read/Write functions to ensure
+ *      the Battery configuration is in a known state.
+ */
+//--------------------------------------------------------------------------------------------------
+FUNCTION SetTechnology
+(
+    string        type [128]   IN,    ///< Choose battery options for the bus per above table
+    uint32        maH          IN,    ///< Specify battery current rating as listed by manufacturer
+    uint32        voltage      IN     ///<  Specify battery voltage as listed by manufacturer
+);
+

@@ -1,0 +1,332 @@
+//--------------------------------------------------------------------------------------------------
+/**
+ * @page c_battery mangOH Battery  API
+ *
+ * @ref ma_battery_interface.h "API Reference" <br>
+ * @subpage howToBattery "How To Setup Battery" <br>
+ *
+ * <HR>
+ *
+ * @section battery_admin overview 
+ *
+ * This API is used as an administrative mode to set up the battery
+ *
+ * @section battery_usage Usage
+ *
+ * The sample code in this section shows how to set the Battery configuration in a user space app
+ * written in C.
+ *
+ * ma_adminbattery_GetTechnology() provides info to the system on  the battery technology. It sets the
+ * battery type (e.g., Lithium-Polymer), the capacity, and voltage.
+ * @code
+ * ma_adminbattery_SetTechnology("LIPO",2000,3700);
+ * @endcode
+ * 
+ *
+ * @section battery_overview 
+ *
+ * This API is used as an non-administrative mode to get battery parameters up the battery
+ *
+ * @section battery_usage Usage
+ *
+ * ma_battery_GetTechnology() provides information on the battery technology
+ * @code
+ *   char batteryType[MA_BATTERY_MAX_TYPE_STR_BYTES];
+ *   uint16_t maH;
+ *   uint16_t voltage; // millivolts
+ *   uint16_t energy; // mWh
+ *   
+ *   le_result_t result = ma_battery_GetTechnology(batteryType, sizeof(batteryType), &maH, &voltage, &energy);
+ *   if (result == LE_OK)
+ *   {
+ *       LE_INFO(" battery type = %s, capacity = %hd mAh,  voltage = %hd mV, energy = %hd mWh", batteryType, maH, voltage, energy);
+ *   }
+ *   else
+ *   {
+ *       LE_ERROR("Unable to get battery technology info (%s)", LE_RESULT_TXT(result));
+ *   }
+ * @endcode
+ *
+ * ma_battery_HealthStatus() provides information on health of the battery
+ * @code
+ *   le_result_t res;
+ *   res = ma_battery_Health();
+ *   LE_FATAL_IF(res != LE_OK, "ma_battery_Health() failed with result=%s", LE_RESULT_TXT(res));
+ * @endcode
+ *
+ * ma_battery_Remaining() provides remaining battery capacity in percentage or maH
+ * @code
+ * le_result_t res;
+ * res = ma_battery_Remaining(value);
+ * LE_FATAL_IF(res != LE_OK, "ma_battery_Level failed with result=%s", LE_RESULT_TXT(res));
+ * @endcode
+ * value is an enum  boolean where 1 is for remaining capacity in maH 
+ * and 0 is for remaining capacity in percentage
+ *
+ * ma_battery_ChargeStatus() provides status as to whether battery is charging, discharging, full
+ * or not charging
+ * @code
+ * le_result_t res;
+ * res = ma_battery_ChargeStatus();
+ * LE_FATAL_IF(res != LE_OK, "ma_battery_Status failed with result=%s", LE_RESULT_TXT(res));
+ * @endcode
+ *
+ * ma_battery_GetVoltage() provides current voltage of the battery
+ * @code
+ * double currentvoltage; // millivolts
+ * le_result_t res;
+ * res = ma_battery_GetVoltage(&currentvoltage);
+ * LE_FATAL_IF(res != LE_OK, "ma_battery_GetVoltage failed with result=%s", LE_RESULT_TXT(res));
+ * @endcode
+ *
+ * ma_battery_GetTemp() provides current temperature of the current monitor connected to battery
+ * @code
+ * le_result_t res;
+ * double currenttemp;
+ * res = ma_battery_GetTemp(&currenttemp);
+ * LE_FATAL_IF(res != LE_OK, "ma_battery_GetTemp failed with result=%s", LE_RESULT_TXT(res));
+ * @endcode
+ *
+ * ma_battery_GetPercentRemaining() provides current temperature of the current monitor connected to battery
+ * @code
+ * le_result_t res;
+ * uint16_t percentremaining;
+ * res = ma_battery_GetPercentRemaining(&percentremaining);
+ * LE_FATAL_IF(res != LE_OK, "ma_battery_GetPercentRemaining failed with result=%s", LE_RESULT_TXT(res));
+ * @endcode
+ *
+ * ma_battery_GetPercentRemaining() provides current temperature of the current monitor connected to battery
+ * @code
+ * le_result_t res;
+ * uint16_t energyremaining;
+ * res = ma_battery_ma_battery_GetEnergyRemaining(&energyremaining);
+ * LE_FATAL_IF(res != LE_OK, "ma_battery_GetEnergyRemaining failed with result=%s", LE_RESULT_TXT(res));
+ * @endcode
+ *
+ * ma_battery_Present() provides current temperature of the current monitor connected to battery
+ * @code
+ * bool present;
+ * present = ma_battery_Present();
+ * LE_INFO("Present or not %d", present); 
+ * @endcode
+ * Copyright (C) Sierra Wireless Inc.
+ */
+//--------------------------------------------------------------------------------------------------
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Charging status of battery
+ */
+//--------------------------------------------------------------------------------------------------
+ENUM ChargeCondition
+{
+    DISCHARGING,   ///< The battery must be discharging when any of these are true:
+                   ///< there is no good power source;
+                   ///< there is a charge fault.
+                   ///< Could also be discharging when in "supplement mode" but
+                   ///< there is no way to tell when its in that mode.
+    CHARGING,      ///< Battery is being charged
+    FULL,          ///< Battery is fully charged
+    CHARGEUNDEFINED,     ///< Battery condition is not defined
+    CHARGEERROR,         ///< Error 
+};
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Health status of battery
+ */
+//--------------------------------------------------------------------------------------------------
+ENUM HealthCondition
+{
+    OVERVOLTAGE,         ///< battery over-voltage limit is clamped at some % above the battery regulation 
+                        ///< voltage. When battery over voltage occurs, the charger device immediately 
+                        ///< disables charge
+    GOOD,                ///< Battery is in good health
+    COLD,               ///< Battery is cold and cannot charge. Check datasheet
+    HOT,                ///< Battery is hot and cannot charge.  Check datasheet
+    HEALTHUNDEFINED,     ///<Battery health not defined
+    HEALTHERROR         ///<  Error in getting health
+};
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Allows reading of the battery settings.
+ *
+ * We only support Li-Po or Li-Ion battery for now. Specify the current rating and number of cells.
+ * All values were specificed by the configure command
+ */
+//--------------------------------------------------------------------------------------------------
+FUNCTION le_result_t GetTechnology
+(
+    string         type [128]      OUT,    ///< Battery type
+    uint16         maH             OUT,    ///< Specified capacity of battery in maH
+    uint16         voltage         OUT,    ///< Specified  voltage of battery in mV
+    uint16         energy          OUT     ///< Specified  energy in mW
+);
+
+//--------------------------------------------------------------------------------------------------
+/** 
+ * Provides battery charge status
+ *
+ * @return
+ *     LE_OK on success or LE_FAULT on failure.
+ *     LE_BAD_PARAMETER for invalid parameter
+ */
+//--------------------------------------------------------------------------------------------------
+FUNCTION ChargeCondition GetChargeStatus
+(
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Provides battery health status
+ *
+ * @return
+ *     LE_OK on success or LE_FAULT on failure.
+ *     LE_BAD_PARAMETER for invalid parameter
+ */
+//--------------------------------------------------------------------------------------------------
+FUNCTION HealthCondition GetHealthStatus
+(
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Provides battery voltage in mV
+ *
+ * @return
+ *     LE_OK on success or LE_FAULT on failure.
+ *     LE_BAD_PARAMETER for invalid parameter
+ */
+//--------------------------------------------------------------------------------------------------
+FUNCTION le_result_t GetVoltage
+(
+    double      volt OUT    ///< Voltage in milliVolts
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Provides battery temperature in Celcius
+ *
+ * @return
+ *     LE_OK on success or LE_FAULT on failure.
+ *     LE_BAD_PARAMETER for invalid parameter
+ */
+//--------------------------------------------------------------------------------------------------
+FUNCTION le_result_t GetTemp
+(
+    double       temp   OUT   ///< Temperature in Celcius
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Remaing battery percentage
+ * @return 
+ *     LE_OK on success 
+ *     LE_FAULT on failure
+ */
+//--------------------------------------------------------------------------------------------------
+FUNCTION le_result_t GetPercentRemaining
+(
+    uint16     percent   OUT  ///< Percentage battery remaining
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ *
+ * Remainng energy remainng in battery in mAh
+ * @ return
+ *    - LE_OK on succes
+ *    - LE_FAULT on failure
+ */
+//--------------------------------------------------------------------------------------------------
+FUNCTION le_result_t GetChargeRemaining
+(
+    uint16 charge       OUT  ///< Charge in maH remaining
+);
+
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Provide battery presence info.
+ *
+ * @return true = present, false = notpresent.
+ *
+ * @note It is invalid to read an output pin.
+ */
+//--------------------------------------------------------------------------------------------------
+FUNCTION bool Present();
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Precentage Level  change event handler (callback).
+ */
+//--------------------------------------------------------------------------------------------------
+HANDLER LevelPercentageHandler
+(
+	uint8 percentage IN,
+	uint8 percentageTrigger IN,
+	bool isHighLevel IN
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Register a callback function to be called when the Percentage Level changes as follows:.
+ * 
+ * If the level goes above levelHigh raise an alarm, if the level goes below levelLow raise 
+ * an alarm
+ *  
+ */
+//--------------------------------------------------------------------------------------------------
+EVENT LevelPercentage
+(
+	uint8 levelLow IN,
+	uint8 levelHigh IN,
+	LevelPercentageHandler handler
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Battery health change event handler (callback).
+ */
+//--------------------------------------------------------------------------------------------------
+HANDLER AlarmHealthHandler
+(
+	HealthCondition health IN
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Register a callback function to be called when there is achange in state of the battery Health
+ * If the level goes above levelHigh raise an alarm, if the level goes below levelLow raise 
+ * an alarm
+ *  
+ */
+//--------------------------------------------------------------------------------------------------
+EVENT AlarmHealth
+(
+	AlarmHealthHandler handler
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Battery health change event handler (callback).
+ */
+//--------------------------------------------------------------------------------------------------
+HANDLER AlarmChargeHandler
+(
+	ChargeCondition condition IN
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Register a callback function to be called when there is achange in state of the battery Health
+ * If the level goes above levelHigh raise an alarm, if the level goes below levelLow raise 
+ * an alarm
+ *  
+ */
+//--------------------------------------------------------------------------------------------------
+EVENT AlarmCharge
+(
+	AlarmChargeHandler handler
+);
