@@ -4,12 +4,12 @@
 le_result_t ReadStringFromFile
 (
     const char *filePath,
-    char  *value,
+    char *value,
     size_t valueSize
 )
 {
     le_result_t r = LE_OK;
-    FILE *f = fopen(filePath, "r");
+    FILE *f       = fopen(filePath, "r");
 
     if (f == NULL)
     {
@@ -19,13 +19,13 @@ le_result_t ReadStringFromFile
     }
 
     bool eofReached = false;
-    size_t numRead = 0;
+    size_t numRead  = 0;
     while (numRead < valueSize - 1)
     {
-	size_t freadRes = fread(&value[numRead], 1, valueSize - 1 - numRead, f);
-	numRead += freadRes;
-	if (feof(f))
-	{
+        size_t freadRes = fread(&value[numRead], 1, valueSize - 1 - numRead, f);
+        numRead += freadRes;
+        if (feof(f))
+        {
             if (numRead > 0 && value[numRead - 1] == '\n')
             {
                 value[numRead - 1] = '\0';
@@ -36,12 +36,12 @@ le_result_t ReadStringFromFile
             }
             eofReached = true;
             break;
-	}
-	if (ferror(f))
-	{
+        }
+        if (ferror(f))
+        {
             r = LE_IO_ERROR;
             goto cleanup;
-	}
+        }
     }
 
     if (!eofReached)
@@ -67,7 +67,7 @@ le_result_t ReadIntFromFile
     if (r == LE_OK)
     {
         int charsScanned = 0;
-        int sscanfRes = sscanf(buffer, "%d%n", value, &charsScanned);
+        int sscanfRes    = sscanf(buffer, "%d%n", value, &charsScanned);
         if (sscanfRes == 1)
         {
             if (charsScanned == strlen(buffer))
@@ -81,12 +81,12 @@ le_result_t ReadIntFromFile
         }
         else
         {
-            r =  LE_FORMAT_ERROR;
+            r = LE_FORMAT_ERROR;
         }
     }
     return r;
 }
-      
+
 
 le_result_t ReadDoubleFromFile
 (
@@ -99,7 +99,7 @@ le_result_t ReadDoubleFromFile
     if (r == LE_OK)
     {
         int charsScanned = 0;
-        int sscanfRes = sscanf(buffer, "%lf%n", value, &charsScanned);
+        int sscanfRes    = sscanf(buffer, "%lf%n", value, &charsScanned);
         if (sscanfRes == 1)
         {
             if (charsScanned == strlen(buffer))
@@ -113,39 +113,12 @@ le_result_t ReadDoubleFromFile
         }
         else
         {
-            r =  LE_FORMAT_ERROR;
+            r = LE_FORMAT_ERROR;
         }
     }
     return r;
 }
 
-/*
-le_result_t WriteIntToFile
-(
-    const char *filePath,
-    int  *value
-)
-{
-    le_result_t r = LE_OK;
-    FILE *f = fopen(filePath, "w");
-
-    if (f == NULL)
-    {
-        LE_WARN("Couldn't open '%s' - %m", filePath);
-        r = LE_IO_ERROR;
-        goto done;
-    }
-
-    fwrite(value , sizeof(value), 1, f );
-
-    goto cleanup;
-
-cleanup:
-    fclose(f);
-done:
-    return r;
-}
-*/
 
 le_result_t WriteIntToFile
 (
@@ -153,27 +126,26 @@ le_result_t WriteIntToFile
     int value
 )
 {
-	char intStr[12];
-	le_result_t r = LE_OK;
-    FILE *f = fopen(filePath, "w");
+    char intStr[12];
+    le_result_t r = LE_OK;
+    FILE *f       = fopen(filePath, "w");
     if (f == NULL)
     {
         LE_WARN("Couldn't open '%s' - %m", filePath);
         r = LE_IO_ERROR;
         goto done;
     }
-    
+
     int bytesRequired = snprintf(intStr, sizeof(intStr), "%d", value);
     LE_ASSERT(bytesRequired < sizeof(intStr));
-    
+
     const size_t numWritten = fwrite(intStr, 1, bytesRequired, f);
     if (numWritten != bytesRequired)
     {
-		r = LE_IO_ERROR;
-	}
-    
+        r = LE_IO_ERROR;
+    }
+
     fclose(f);
 done:
     return r;
 }
-
