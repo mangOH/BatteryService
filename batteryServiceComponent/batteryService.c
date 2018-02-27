@@ -10,7 +10,7 @@
 
 #include "legato.h"
 #include "interfaces.h"
-#include "/home/asyal/mangOH/apps/BatteryService/batteryServiceComponent/batteryUtils.h"
+#include "batteryUtils.h"
 
 #define BATTERY_SAMPLE_INTERVAL_IN_MILLISECONDS 10000
 
