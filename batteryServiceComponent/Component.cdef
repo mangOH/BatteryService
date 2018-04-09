@@ -15,6 +15,7 @@ requires:
     api:
     {
         le_cfg.api
+        dhubIO = io.api
     }
 }
 

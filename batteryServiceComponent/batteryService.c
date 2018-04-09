@@ -1,7 +1,9 @@
 /**
  *
- * This file provides the implementation of @ref c_battery
+ * @file batteryService.c
  *
+ * This file provides control and monitoring of the power supply battery via the @ref c_battery and
+ * the Data Hub.
  *
  * <hr>
  *
@@ -16,62 +18,72 @@
 
 static const char ChargerStr[] = "/sys/devices/i2c-0/i2c-2/2-006b/power_supply/bq24190-charger/%s";
 static const char HealthStr[]  = "health";
-static const char BatteryStr[] = "/sys/devices/i2c-0/i2c-2/2-006b/power_supply/bq24190-battery/%s";
-static const char StatusStr[]  = "status";
+static const char StatusPath[] = "/sys/devices/i2c-0/i2c-2/2-006b/power_supply/bq24190-battery/status";
 static const char MonitorStr[] = "/sys/devices/i2c-0/i2c-2/2-0064/power_supply/LTC2942/%s";
 static const char VoltageStr[] = "voltage_now";
 static const char TempStr[]    = "temp";
 static const char ChargeNowStr[] = "charge_now";
 static const char PresenceStr[]  = "charge_counter";
-static uint16_t ChargeRemaining;
+
+static le_mem_PoolRef_t LevelAlarmPool;
+static le_ref_MapRef_t LevelAlarmRefMap;
+
+static le_mem_PoolRef_t ChargingStatusRegPool;
+static le_ref_MapRef_t ChargingStatusRegRefMap;
+
+static le_mem_PoolRef_t HealthStatusRegPool;
+static le_ref_MapRef_t HealthStatusRegRefMap;
 
 
-static le_mem_PoolRef_t LevelEventPool;
-static le_ref_MapRef_t LevelEventRefMap;
-
-static le_mem_PoolRef_t AlarmChargePool;
-static le_ref_MapRef_t AlarmChargeRefMap;
-
-static le_mem_PoolRef_t AlarmHealthPool;
-static le_ref_MapRef_t AlarmHealthRefMap;
-
-
-enum LevelEvent
+typedef enum
 {
     LEVEL_HIGH,
     LEVEL_LOW,
     LEVEL_NONE,
-};
+}
+LevelAlarmType_t;
 
-struct LevelEventRegistration
+typedef struct
 {
     uint8_t percentageHigh;
     uint8_t percentageLow;
-    enum LevelEvent lastEventType;
+    LevelAlarmType_t lastAlarmType;
 
     ma_battery_LevelPercentageHandlerFunc_t handler;
     void *clientContext;
     le_msg_SessionRef_t clientSessionRef;
-};
+}
+LevelAlarmReg_t;
 
-struct AlarmChargeRegistration
+typedef struct
 {
-    ma_battery_AlarmChargeHandlerFunc_t handler;
+    ma_battery_ChargingStatusHandlerFunc_t handler;
     void *clientContext;
     le_msg_SessionRef_t clientSessionRef;
-};
+}
+ChargingStatusReg_t;
 
-struct AlarmHealthRegistration
+typedef struct
 {
-    ma_battery_AlarmHealthHandlerFunc_t handler;
+    ma_battery_HealthHandlerFunc_t handler;
     void *clientContext;
     le_msg_SessionRef_t clientSessionRef;
-};
+}
+HealthStatusReg_t;
 
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Register a callback function to be called when the Percentage Level changes as follows:
+ *
+ * If the level goes above levelHigh raise an alarm, if the level goes below levelLow raise
+ * an alarm.
+ */
+//--------------------------------------------------------------------------------------------------
 ma_battery_LevelPercentageHandlerRef_t ma_battery_AddLevelPercentageHandler
 (
-    uint8_t percentageLow,
-    uint8_t percentageHigh,
+    uint8_t percentageLow,  ///< Low percentage trigger threshold (0 = no low level alarm)
+    uint8_t percentageHigh, ///< High percentage trigger threshold (>=100 means no high alm)
     ma_battery_LevelPercentageHandlerFunc_t handler,
     void *context
 )
@@ -87,24 +99,29 @@ ma_battery_LevelPercentageHandlerRef_t ma_battery_AddLevelPercentageHandler
         return NULL;
     }
 
-    struct LevelEventRegistration *reg = le_mem_ForceAlloc(LevelEventPool);
+    LevelAlarmReg_t *reg = le_mem_ForceAlloc(LevelAlarmPool);
     reg->percentageLow                 = percentageLow;
     reg->percentageHigh                = percentageHigh;
-    reg->lastEventType                 = LEVEL_NONE;
+    reg->lastAlarmType                 = LEVEL_NONE;
     reg->handler                       = handler;
     reg->clientContext                 = context;
     reg->clientSessionRef              = ma_battery_GetClientSessionRef();
 
-    return le_ref_CreateRef(LevelEventRefMap, reg);
+    return le_ref_CreateRef(LevelAlarmRefMap, reg);
 }
 
 
+//--------------------------------------------------------------------------------------------------
+/**
+ * Deregister a callback function registered using ma_battery_AddLevelPercentageHandler().
+ */
+//--------------------------------------------------------------------------------------------------
 void ma_battery_RemoveLevelPercentageHandler
 (
     ma_battery_LevelPercentageHandlerRef_t handlerRef
 )
 {
-    struct LevelEventRegistration *reg = le_ref_Lookup(LevelEventRefMap, handlerRef);
+    LevelAlarmReg_t *reg = le_ref_Lookup(LevelAlarmRefMap, handlerRef);
     if (reg == NULL)
     {
         LE_ERROR("Failed to lookup event based on handle");
@@ -113,7 +130,7 @@ void ma_battery_RemoveLevelPercentageHandler
     {
         if (reg->clientSessionRef == ma_battery_GetClientSessionRef())
         {
-            le_ref_DeleteRef(LevelEventRefMap, handlerRef);
+            le_ref_DeleteRef(LevelAlarmRefMap, handlerRef);
             le_mem_Release(reg);
         }
         else
@@ -129,12 +146,12 @@ static void RemoveAllLevelAlarmHandlersOwnedByClient
     le_msg_SessionRef_t owner
 )
 {
-    le_ref_IterRef_t it = le_ref_GetIterator(LevelEventRefMap);
+    le_ref_IterRef_t it = le_ref_GetIterator(LevelAlarmRefMap);
 
     bool finished = le_ref_NextNode(it) != LE_OK;
     while (!finished)
     {
-        struct LevelEventRegistration *reg = le_ref_GetValue(it);
+        LevelAlarmReg_t *reg = le_ref_GetValue(it);
         LE_ASSERT(reg != NULL);
         // In order to prevent invalidating the iterator, we store the reference of the device we
         // want to close and advance the iterator before calling le_spi_Close which will remove the
@@ -143,72 +160,83 @@ static void RemoveAllLevelAlarmHandlersOwnedByClient
         finished  = le_ref_NextNode(it) != LE_OK;
         if (reg->clientSessionRef == ref)
         {
-            le_ref_DeleteRef(LevelEventRefMap, ref);
+            le_ref_DeleteRef(LevelAlarmRefMap, ref);
             le_mem_Release(reg);
         }
     }
 }
 
-static void CheckBatteryLevelEvent
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Checks the list of registered battery level alarm thresholds to see if an alarm event should be
+ * reported.  If so, reports them.
+ */
+//--------------------------------------------------------------------------------------------------
+static void CheckBatteryLevelAlarm
 (
     unsigned int batteryPercentage
 )
 {
-    le_ref_IterRef_t it = le_ref_GetIterator(LevelEventRefMap);
-    bool finished       = le_ref_NextNode(it) != LE_OK;
+    le_ref_IterRef_t it = le_ref_GetIterator(LevelAlarmRefMap);
+    bool finished = (le_ref_NextNode(it) != LE_OK);
     while (!finished)
     {
-        struct LevelEventRegistration *reg = le_ref_GetValue(it);
+        LevelAlarmReg_t *reg = le_ref_GetValue(it);
         LE_ASSERT(reg != NULL);
-        if (batteryPercentage > reg->percentageHigh && reg->lastEventType != LEVEL_HIGH)
+        if ((batteryPercentage > reg->percentageHigh) && (reg->lastAlarmType != LEVEL_HIGH))
         {
             reg->handler(batteryPercentage, reg->percentageHigh, true, reg->clientContext);
-            reg->lastEventType = LEVEL_HIGH;
+            reg->lastAlarmType = LEVEL_HIGH;
         }
-        else if (batteryPercentage < reg->percentageLow && reg->lastEventType != LEVEL_LOW)
+        else if ((batteryPercentage < reg->percentageLow) && (reg->lastAlarmType != LEVEL_LOW))
         {
             reg->handler(batteryPercentage, reg->percentageLow, false, reg->clientContext);
-            reg->lastEventType = LEVEL_LOW;
+            reg->lastAlarmType = LEVEL_LOW;
         }
 
-        finished = le_ref_NextNode(it) != LE_OK;
+        finished = (le_ref_NextNode(it) != LE_OK);
     }
 }
 
-ma_battery_AlarmChargeHandlerRef_t
-ma_battery_AddAlarmChargeHandler(
-    ma_battery_AlarmChargeHandlerFunc_t handler,
+
+ma_battery_ChargingStatusChangeHandlerRef_t ma_battery_AddChargingStatusChangeHandler
+(
+    ma_battery_ChargingStatusHandlerFunc_t handler,
     void *context
 )
 {
-    struct AlarmChargeRegistration *reg = le_mem_ForceAlloc(AlarmChargePool);
+    ChargingStatusReg_t *reg = le_mem_ForceAlloc(ChargingStatusRegPool);
+
     reg->handler                        = handler;
     reg->clientContext                  = context;
     reg->clientSessionRef               = ma_battery_GetClientSessionRef();
-    return le_ref_CreateRef(AlarmChargeRefMap, reg);
+
+    return le_ref_CreateRef(ChargingStatusRegRefMap, reg);
 }
 
 
-void ma_battery_RemoveAlarmChargeHandler
+void ma_battery_RemoveChargingStatusChangeHandler
 (
-    ma_battery_AlarmChargeHandlerRef_t handlerRef
+    ma_battery_ChargingStatusChangeHandlerRef_t handlerRef
 )
 {
-    struct AlarmChargeRegistration *reg = le_ref_Lookup(AlarmChargeRefMap, handlerRef);
+    ChargingStatusReg_t *reg = le_ref_Lookup(ChargingStatusRegRefMap, handlerRef);
     if (reg == NULL)
     {
-        LE_ERROR("Failed to lookup event based on handle");
+        LE_ERROR("Failed to lookup event based on handle %p", handlerRef);
     }
     else
     {
         if (reg->clientSessionRef == ma_battery_GetClientSessionRef())
         {
-            le_ref_DeleteRef(AlarmChargeRefMap, handlerRef);
+            le_ref_DeleteRef(ChargingStatusRegRefMap, handlerRef);
             le_mem_Release(reg);
         }
         else
         {
-            LE_ERROR("Remove invalid Alarm Health event handleRef");
+            LE_ERROR("Attempt to remove another client's Alarm Health event handleRef %p",
+                     handlerRef);
         }
     }
 }
@@ -219,12 +247,12 @@ static void RemoveAllChargeAlarmHandlersOwnedByClient
     le_msg_SessionRef_t owner
 )
 {
-    le_ref_IterRef_t it = le_ref_GetIterator(AlarmChargeRefMap);
+    le_ref_IterRef_t it = le_ref_GetIterator(ChargingStatusRegRefMap);
 
     bool finished = le_ref_NextNode(it) != LE_OK;
     while (!finished)
     {
-        struct AlarmChargeRegistration *reg = le_ref_GetValue(it);
+        ChargingStatusReg_t *reg = le_ref_GetValue(it);
         LE_ASSERT(reg != NULL);
         // In order to prevent invalidating the iterator, we store the reference of the device we
         // want to close and advance the iterator before calling le_spi_Close which will remove the
@@ -233,64 +261,72 @@ static void RemoveAllChargeAlarmHandlersOwnedByClient
         finished  = le_ref_NextNode(it) != LE_OK;
         if (reg->clientSessionRef == ref)
         {
-            le_ref_DeleteRef(AlarmChargeRefMap, ref);
+            le_ref_DeleteRef(ChargingStatusRegRefMap, ref);
             le_mem_Release(reg);
         }
     }
 }
 
-static void CheckAlarmChargeEvent
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Report a change in the charging status to any registered charging status handlers.
+ */
+//--------------------------------------------------------------------------------------------------
+static void ReportChargingStatusChange
 (
-    ma_battery_ChargeCondition_t chargecondition
+    ma_battery_ChargingStatus_t status
 )
 {
-    le_ref_IterRef_t it = le_ref_GetIterator(AlarmChargeRefMap);
+    le_ref_IterRef_t it = le_ref_GetIterator(ChargingStatusRegRefMap);
     bool finished       = le_ref_NextNode(it) != LE_OK;
     while (!finished)
     {
-        struct AlarmChargeRegistration *reg = le_ref_GetValue(it);
+        ChargingStatusReg_t *reg = le_ref_GetValue(it);
         LE_ASSERT(reg != NULL);
 
-        reg->handler(chargecondition, reg->clientContext);
-        finished = le_ref_NextNode(it) != LE_OK;
+        reg->handler(status, reg->clientContext);
+        finished = (le_ref_NextNode(it) != LE_OK);
     }
 }
 
-ma_battery_AlarmHealthHandlerRef_t ma_battery_AddAlarmHealthHandler
+
+ma_battery_HealthChangeHandlerRef_t ma_battery_AddHealthChangeHandler
 (
-    ma_battery_AlarmHealthHandlerFunc_t handler,
+    ma_battery_HealthHandlerFunc_t handler,
     void *context
 )
 {
-    struct AlarmHealthRegistration *reg = le_mem_ForceAlloc(AlarmChargePool);
+    HealthStatusReg_t *reg = le_mem_ForceAlloc(HealthStatusRegPool);
     reg->handler                        = handler;
     reg->clientContext                  = context;
     reg->clientSessionRef               = ma_battery_GetClientSessionRef();
 
-    return le_ref_CreateRef(AlarmHealthRefMap, reg);
+    return le_ref_CreateRef(HealthStatusRegRefMap, reg);
 }
 
 
-void ma_battery_RemoveAlarmHealthHandler
+void ma_battery_RemoveHealthChangeHandler
 (
-    ma_battery_AlarmHealthHandlerRef_t handlerRef
+    ma_battery_HealthChangeHandlerRef_t handlerRef
 )
 {
-    struct AlarmHealthRegistration *reg = le_ref_Lookup(AlarmHealthRefMap, handlerRef);
+    HealthStatusReg_t *reg = le_ref_Lookup(HealthStatusRegRefMap, handlerRef);
     if (reg == NULL)
     {
-        LE_ERROR("Failed to lookup event based on handle");
+        LE_ERROR("Failed to lookup event based on handle %p", handlerRef);
     }
     else
     {
         if (reg->clientSessionRef == ma_battery_GetClientSessionRef())
         {
-            le_ref_DeleteRef(AlarmHealthRefMap, handlerRef);
+            le_ref_DeleteRef(HealthStatusRegRefMap, handlerRef);
             le_mem_Release(reg);
         }
         else
         {
-            LE_ERROR("Remove invalid Alarm Health event handleRef");
+            LE_ERROR("Attempt to remove another client's Alarm Health event handleRef %p",
+                     handlerRef);
         }
     }
 }
@@ -301,12 +337,12 @@ static void RemoveAllHealthAlarmHandlersOwnedByClient
     le_msg_SessionRef_t owner
 )
 {
-    le_ref_IterRef_t it = le_ref_GetIterator(AlarmHealthRefMap);
+    le_ref_IterRef_t it = le_ref_GetIterator(HealthStatusRegRefMap);
 
     bool finished = le_ref_NextNode(it) != LE_OK;
     while (!finished)
     {
-        struct AlarmHealthRegistration *reg = le_ref_GetValue(it);
+        HealthStatusReg_t *reg = le_ref_GetValue(it);
         LE_ASSERT(reg != NULL);
         // In order to prevent invalidating the iterator, we store the reference of the device we
         // want to close and advance the iterator before calling le_spi_Close which will remove the
@@ -315,24 +351,30 @@ static void RemoveAllHealthAlarmHandlersOwnedByClient
         finished  = le_ref_NextNode(it) != LE_OK;
         if (reg->clientSessionRef == ref)
         {
-            le_ref_DeleteRef(AlarmHealthRefMap, ref);
+            le_ref_DeleteRef(HealthStatusRegRefMap, ref);
             le_mem_Release(reg);
         }
     }
 }
 
-static void CheckAlarmHealthEvent
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Reports a change in the health status to any registered health status change event handlers.
+ */
+//--------------------------------------------------------------------------------------------------
+static void ReportHealthStatusChange
 (
-    ma_battery_HealthCondition_t healthcondition
+    ma_battery_HealthStatus_t status
 )
 {
-    le_ref_IterRef_t it = le_ref_GetIterator(AlarmHealthRefMap);
+    le_ref_IterRef_t it = le_ref_GetIterator(HealthStatusRegRefMap);
     bool finished       = le_ref_NextNode(it) != LE_OK;
     while (!finished)
     {
-        struct AlarmHealthRegistration *reg = le_ref_GetValue(it);
+        HealthStatusReg_t *reg = le_ref_GetValue(it);
         LE_ASSERT(reg != NULL);
-        reg->handler(healthcondition, reg->clientContext);
+        reg->handler(status, reg->clientContext);
         finished = le_ref_NextNode(it) != LE_OK;
     }
 }
@@ -365,37 +407,33 @@ static void ClientSessionClosedHandler
 void ma_adminbattery_SetTechnology
 (
     const char *batteryType,
-    uint32_t maH,
-    uint32_t voltage
+    uint32_t mAh,
+    uint32_t milliVolts
 )
 {
-    // Create a write transaction so we can update the tree
-
     LE_DEBUG(" Create battery configuration");
+
+    // Create a write transaction so we can update the tree
     le_cfg_IteratorRef_t iteratorRef = le_cfg_CreateWriteTxn("batteryInfo");
 
-    // Set the integer  for the battery as it is an enum
-    LE_DEBUG(" Enter the battery type");
+    // Set the integer for the battery as it is an enum
     le_cfg_SetString(iteratorRef, "type", batteryType);
 
-
     // Set the battery capacity as set by the manufacturer
-    LE_DEBUG("Enter the battery capacity in maH");
-    le_cfg_SetInt(iteratorRef, "capacity", maH);
+    le_cfg_SetInt(iteratorRef, "capacity", mAh);
 
     // Set the voltage rating as set by the manufacturer in milliVolts
-    LE_DEBUG("Enter the voltage rating");
-    le_cfg_SetInt(iteratorRef, "voltage", voltage);
-
-    int32_t energy = (int32_t)(((double)maH) * ((double)voltage) / 1000.0);
-
-    // Set the voltage rating as set by the manufacturer
-    LE_DEBUG("Enter the energy in mWH");
-    le_cfg_SetInt(iteratorRef, "energy", energy);
+    le_cfg_SetInt(iteratorRef, "voltage", milliVolts);
 
     // Commit the transaction to make sure new settings are written to config tree
     le_cfg_CommitTxn(iteratorRef);
+
+    // Push this info to the Data Hub.
+    dhubIO_PushString("type/tech", 0, batteryType);
+    dhubIO_PushNumeric("type/voltage", 0, ((double)milliVolts) / 1000.0);
+    dhubIO_PushNumeric("type/capacity", 0, mAh);
 }
+
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -407,93 +445,65 @@ void ma_adminbattery_SetTechnology
 le_result_t ma_battery_GetTechnology
 (
     char *batteryType,
-    size_t lengthofname,
-    uint16_t *maH,
-    uint16_t *voltage,
-    uint16_t *energy
+    size_t batteryTypeSize, ///< Size of buffer pointed to by batteryType (bytes).
+    uint16_t *capacityPtr,
+    uint16_t *voltagePtr
 )
 {
-    // Create a read transaction so we can update the tree
+    // Create a read transaction
     le_cfg_IteratorRef_t iteratorRef = le_cfg_CreateReadTxn("batteryInfo");
 
-    if (le_cfg_NodeExists(iteratorRef, "") == false)
-    {
-        LE_WARN("Configuration not found");
-        le_cfg_CancelTxn(iteratorRef);
-        return LE_NOT_FOUND;
-    }
-
     // Get the name for the battery type
-    le_result_t result = le_cfg_GetString(iteratorRef, "type", batteryType, lengthofname, "");
-
+    le_result_t result = le_cfg_GetString(iteratorRef, "type", batteryType, batteryTypeSize, "");
     if (result != LE_OK)
     {
-        le_cfg_CancelTxn(iteratorRef);
-        LE_ERROR("Cannot get battery type with failure == %s", LE_RESULT_TXT(result));
-        return result;
+        LE_ERROR("Cannot get battery type (%s)", LE_RESULT_TXT(result));
+        goto cleanup;
     }
 
-    // Get the maH  for the battery
-    int32_t batteryConfigCapacity = le_cfg_GetInt(iteratorRef, "capacity", -1);
-
-    if (batteryConfigCapacity < 0)
+    // Get the battery capacity (or -1 if not found)
+    int32_t capacity = le_cfg_GetInt(iteratorRef, "capacity", -1);
+    if (capacity < 0)
     {
-        le_cfg_CancelTxn(iteratorRef);
-        LE_ERROR("Cannot get battery capcity");
-        return LE_NOT_FOUND;
+        LE_ERROR("Cannot get battery capacity");
+        result = LE_NOT_FOUND;
+        goto cleanup;
     }
-    *maH = (uint16_t)batteryConfigCapacity;
-    // Get the voltage  for the battery
-    int32_t batteryConfigVoltage = le_cfg_GetInt(iteratorRef, "voltage", -1);
+    *capacityPtr = (uint16_t)capacity;
 
-    if (batteryConfigCapacity < 0)
+    // Get the battery voltage in mV (or -1 if not found)
+    int32_t voltage = le_cfg_GetInt(iteratorRef, "voltage", -1);
+    if (voltage < 0)
     {
-        le_cfg_CancelTxn(iteratorRef);
         LE_ERROR("Cannot get battery voltage");
-        return LE_NOT_FOUND;
+        result = LE_NOT_FOUND;
+        goto cleanup;
     }
+    *voltagePtr = (uint16_t)voltage;
 
-    *voltage = (uint16_t)batteryConfigVoltage;
+cleanup:
 
-    // Get the mWH  for the battery
-    int32_t batteryConfigEnergy = le_cfg_GetInt(iteratorRef, "energy", -1);
-
-    if (batteryConfigEnergy < 0)
-    {
-        le_cfg_CancelTxn(iteratorRef);
-        LE_ERROR("Cannot get battery energy");
-        return LE_NOT_FOUND;
-    }
-
-    *energy = (uint32_t)batteryConfigEnergy;
     le_cfg_CancelTxn(iteratorRef);
-    return LE_OK;
+    return result;
 }
+
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Get the battery health
+ * Provides battery health status
  *
- * @return
- *	- GOOD
- *      - OVERVOLTAGE
- *      - COLD
- *      - HOT
- *      - HEALTHUNDEFINED
- *      - HEALTHERROR
+ * @return Health status code.
  */
 //--------------------------------------------------------------------------------------------------
-ma_battery_HealthCondition_t ma_battery_GetHealthStatus(void)
+ma_battery_HealthStatus_t ma_battery_GetHealthStatus(void)
 {
-    le_result_t r;
-    char path[256], healthValue[512];
-
+    char path[256];
     int pathLen = snprintf(path, sizeof(path), ChargerStr, HealthStr);
     LE_ASSERT(pathLen < sizeof(path));
 
-
-    r = ReadStringFromFile(path, healthValue, sizeof(healthValue));
-    LE_INFO(" health =  %s", healthValue);
+    char healthValue[512];
+    le_result_t r = ReadStringFromFile(path, healthValue, sizeof(healthValue));
+    LE_DEBUG(" health = %s", healthValue);
     if (r == LE_OK)
     {
         if (strcmp(healthValue, "Good") == 0)
@@ -524,50 +534,45 @@ ma_battery_HealthCondition_t ma_battery_GetHealthStatus(void)
     }
 }
 
+
 //--------------------------------------------------------------------------------------------------
 /**
- * Get Charge Status
+ * Provides battery charging status
  *
- * @return
- *      - NOTCHARGING
- *      - CHARGING
- *      - FULL
- *      - CHARGEUNDEFINED
- *      - CHARGEERROR
+ * @return Charging status code.
  */
 //--------------------------------------------------------------------------------------------------
-ma_battery_ChargeCondition_t ma_battery_GetChargeStatus(void)
+ma_battery_ChargingStatus_t ma_battery_GetChargingStatus(void)
 {
-    le_result_t r;
-    char path[256], chargeCondition[512];
+    char chargingStatus[512];
 
-    int pathLen = snprintf(path, sizeof(path), BatteryStr, StatusStr);
-    LE_ASSERT(pathLen < sizeof(path));
+    le_result_t r = ReadStringFromFile(StatusPath, chargingStatus, sizeof(chargingStatus));
 
-
-    r = ReadStringFromFile(path, chargeCondition, sizeof(chargeCondition));
-    LE_INFO(" Charge =  %s", chargeCondition);
     if (r == LE_OK)
     {
-        if (strcmp(chargeCondition, "Discharging") == 0)
+        if (strcmp(chargingStatus, "Discharging") == 0)
         {
             return MA_BATTERY_DISCHARGING;
         }
-        else if (strcmp(chargeCondition, "Charging") == 0)
+        else if (strcmp(chargingStatus, "Charging") == 0)
         {
             return MA_BATTERY_CHARGING;
         }
-        else if (strcmp(chargeCondition, "Full") == 0)
+        else if (strcmp(chargingStatus, "Full") == 0)
         {
             return MA_BATTERY_FULL;
         }
         else
         {
+            LE_ERROR("Unrecognized charging status '%s'.", chargingStatus);
+
             return MA_BATTERY_HEALTHUNDEFINED;
         }
     }
     else
     {
+        LE_DEBUG("failed to read the charging status (%s).", LE_RESULT_TXT(r));
+
         return MA_BATTERY_CHARGEERROR;
     }
 }
@@ -575,12 +580,10 @@ ma_battery_ChargeCondition_t ma_battery_GetChargeStatus(void)
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Get Voltage Status
+ * Get battery voltage (in Volts)
  *
  * @return
- *      -
- *      - LE_OK
- *      - LE_IO_ERROR
+ *      - LE_OK on success.
  */
 //--------------------------------------------------------------------------------------------------
 le_result_t ma_battery_GetVoltage
@@ -588,104 +591,86 @@ le_result_t ma_battery_GetVoltage
     double *volt
 )
 {
-    le_result_t r;
-    int32_t voltcalc;
     char path[256];
-
     int pathLen = snprintf(path, sizeof(path), MonitorStr, VoltageStr);
     LE_ASSERT(pathLen < sizeof(path));
 
-
-    r = ReadIntFromFile(path, &voltcalc);
+    int32_t mV;
+    le_result_t r = ReadIntFromFile(path, &mV);
     if (r == LE_OK)
     {
-        *volt = ((double)voltcalc) / 1000.0;
-        return r;
+        *volt = ((double)mV) / 1000.0;
     }
-    else
-    {
-        return r;
-    }
+
+    return r;
 }
+
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Get Temperature Status
+ * Get battery temperature in degrees Celcius
  *
  * @return
- *      -
- *      - LE_OK
- *      - LE_IO_ERROR
+ *      - LE_OK on success.
  */
 //--------------------------------------------------------------------------------------------------
 le_result_t ma_battery_GetTemp
 (
-    double *temp
+    double *temp    ///< degrees C
 )
 {
-    le_result_t r;
-    int32_t tempcalc;
     char path[256];
-
     int pathLen = snprintf(path, sizeof(path), MonitorStr, TempStr);
     LE_ASSERT(pathLen < sizeof(path));
 
-
-    r = ReadIntFromFile(path, &tempcalc);
+    int32_t tempcalc;  // In centidegrees Celcius.
+    le_result_t r = ReadIntFromFile(path, &tempcalc);
     if (r == LE_OK)
     {
         *temp = ((double)tempcalc) / 100.0;
-        return r;
     }
-    else
-    {
-        return r;
-    }
+
+    return r;
 }
+
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Get  Charge Remaining in mAh
+ * Get Charge Remaining in mAh
+ *
  * @return
- *      -
  *      - LE_OK
  *      - LE_IO_ERROR
  */
 //--------------------------------------------------------------------------------------------------
-
 le_result_t ma_battery_GetChargeRemaining
 (
-    uint16_t *charge
+    uint16_t *charge    ///< mAh
 )
 {
-    le_result_t r;
-    int32_t chargeNow;
     char path[256];
-
     int pathLen = snprintf(path, sizeof(path), MonitorStr, ChargeNowStr);
     LE_ASSERT(pathLen < sizeof(path));
 
-
-    r = ReadIntFromFile(path, &chargeNow);
+    int32_t uAh;
+    le_result_t r = ReadIntFromFile(path, &uAh);
     if (r == LE_OK)
     {
-        *charge = ((chargeNow) / 1000);
+        *charge = uAh / 1000;
+    }
 
-        return r;
-    }
-    else
-    {
-        return r;
-    }
+    return r;
 }
+
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Get  Energy Remaining in percentage
+ * Get charge remaining, in percentage
+ *
  * @return
- *      -
  *      - LE_OK
  *      - LE_IO_ERROR
+ *      - LE_NOT_FOUND
  */
 //--------------------------------------------------------------------------------------------------
 le_result_t ma_battery_GetPercentRemaining
@@ -693,79 +678,56 @@ le_result_t ma_battery_GetPercentRemaining
     uint16_t *percentage
 )
 {
-    le_result_t r;
-    int32_t chargeNow;
-    char path[256];
+    int32_t capacity = le_cfg_QuickGetInt("batteryInfo/capacity", -1);
 
-    int pathLen = snprintf(path, sizeof(path), MonitorStr, ChargeNowStr);
-    LE_ASSERT(pathLen < sizeof(path));
-
-    le_cfg_IteratorRef_t iteratorRef = le_cfg_CreateReadTxn("batteryInfo");
-
-    if (le_cfg_NodeExists(iteratorRef, "") == false)
+    if (capacity < 0)
     {
-        LE_WARN("Configuration not found");
-        le_cfg_CancelTxn(iteratorRef);
+        LE_WARN("Battery capacity not configured");
         return LE_NOT_FOUND;
-    }
-
-    int32_t batteryConfigCapacity = le_cfg_GetInt(iteratorRef, "capacity", -1);
-
-    if (batteryConfigCapacity < 0)
-    {
-        le_cfg_CancelTxn(iteratorRef);
-        LE_WARN("Cannot get battery capcity yet");
-        r = LE_CLOSED;
-        return r;
     }
     else
     {
-        r = ReadIntFromFile(path, &chargeNow);
+        uint16_t remaining;
+        le_result_t r = ma_battery_GetChargeRemaining(&remaining);
         if (r == LE_OK)
         {
-            *percentage = round(100 * (((double)chargeNow) / 1000) / (double)batteryConfigCapacity);
-            le_cfg_CancelTxn(iteratorRef);
-            return r;
+            *percentage = (uint16_t)(100UL * remaining / capacity);
         }
-        else
-        {
-            le_cfg_CancelTxn(iteratorRef);
-            return r;
-        }
+
+        return r;
     }
 }
+
 
 //--------------------------------------------------------------------------------------------------
 /**
  * Inform user of battery presence
+ *
  * @return
  *      - true  if battery is present
  *      - false if no battery
  */
 //--------------------------------------------------------------------------------------------------
-
 bool ma_battery_Present(void)
 {
-    le_result_t r;
-    int32_t chargecalc;
     char path[256];
-
     int pathLen = snprintf(path, sizeof(path), MonitorStr, PresenceStr);
     LE_ASSERT(pathLen < sizeof(path));
 
-
-    r = ReadIntFromFile(path, &chargecalc);
-    LE_INFO("value %d", chargecalc);
+    int32_t present;  // 0 = not present, 1 = present.
+    le_result_t r = ReadIntFromFile(path, &present);
     if (r == LE_OK)
     {
-        if (chargecalc == 0)
+        LE_DEBUG("value %d", present);
+
+        if (present == 0)
         {
-            LE_INFO("Battery not present");
+            LE_DEBUG("Battery not present");
             return false;
         }
         else
         {
-            LE_INFO("Battery  present");
+            LE_DEBUG("Battery present");
             return true;
         }
     }
@@ -776,191 +738,257 @@ bool ma_battery_Present(void)
     }
 }
 
+
 //--------------------------------------------------------------------------------------------------
 /**
- * Timer handler  will monitor information on the battery charge status
- * If indication is that battery is full, then it will update the LTC charge register to
- * maximum battery charge capacity in maH
+ * Write the present charge level to the battery monitoring driver.
+ *
+ * This is only done to correct the monitoring driver's idea of how much charge is presently stored
+ * in the battery.  Normally the driver updates this itself as the battery drains and charges.
  */
 //--------------------------------------------------------------------------------------------------
-
-static void initializationBattery(void)
+static void UpdateChargeLevel
+(
+    int mAh
+)
 {
-    LE_INFO("**********************");
-    // le_result_t r;
-    char path[256], chargeCondition[512], setcapacity[256];
-    int uaH;
-    int pathLen = snprintf(path, sizeof(path), BatteryStr, StatusStr);
-    LE_ASSERT(pathLen < sizeof(path));
-
-    int setcapacityLen = snprintf(setcapacity, sizeof(setcapacity), MonitorStr, ChargeNowStr);
-    LE_ASSERT(setcapacityLen < sizeof(setcapacity));
-
-    ReadStringFromFile(path, chargeCondition, sizeof(chargeCondition));
-    if (strcmp(chargeCondition, "Full") == 0)
+    if (mAh > 0)
     {
-        LE_INFO("Battery is full");
-        // Create a read transaction so we can update the tree
-        le_cfg_IteratorRef_t iteratorRef = le_cfg_CreateReadTxn("batteryInfo");
+        int uAh = mAh * 1000;
 
-        if (le_cfg_NodeExists(iteratorRef, "") == false)
-        {
-            le_cfg_CancelTxn(iteratorRef);
-            LE_WARN("Battery configuration not found");
-        }
-        else
-        {
-            // Get the maH  for the battery
-            int32_t fullbatteryConfigCapacity = le_cfg_GetInt(iteratorRef, "capacity", -1);
+        LE_DEBUG("battery %d", uAh);
 
-            if (fullbatteryConfigCapacity < 0)
-            {
-                LE_WARN("Cannot get battery capcity yet");
-            }
-            else
-            {
-                uaH = fullbatteryConfigCapacity * 1000;
-                LE_INFO("battery %d", uaH);
-
-                WriteIntToFile(setcapacity, uaH);
-                ChargeRemaining = fullbatteryConfigCapacity;
-            }
-        }
-        le_cfg_CancelTxn(iteratorRef);
+        char path[256];
+        int len = snprintf(path, sizeof(path), MonitorStr, ChargeNowStr);
+        LE_ASSERT(len < sizeof(path));
+        WriteIntToFile(path, uAh);
     }
     else
     {
-        LE_DEBUG("Battery not full");
-        le_cfg_IteratorRef_t iteratorRef = le_cfg_CreateReadTxn("batteryInfo");
-
-        if (le_cfg_NodeExists(iteratorRef, "") == false)
-        {
-            le_cfg_CancelTxn(iteratorRef);
-            LE_WARN("Battery configuration not found");
-        }
-        else
-        {
-            // Get the uaH  for the battery
-            int32_t inibatteryConfigCapacity = le_cfg_GetInt(iteratorRef, "capacity", -1);
-
-            if (inibatteryConfigCapacity < 0)
-            {
-                LE_WARN("Cannot get battery capcity yet");
-            }
-            else
-            {
-                uaH = inibatteryConfigCapacity * 1000 / 2;
-                LE_INFO("battery %d", uaH);
-
-                WriteIntToFile(setcapacity, uaH);
-                ChargeRemaining = inibatteryConfigCapacity / 2;
-            }
-        }
-        le_cfg_CancelTxn(iteratorRef);
+        LE_ERROR("Charge level invalid. (%d mAh)", mAh);
     }
 }
+
+
 //--------------------------------------------------------------------------------------------------
 /**
- * Timer handler  will monitor information on the battery charge status
- * If indication is that battery is full, then it will update the LTC charge register to
- * maximum battery charge capacity in maH
+ * Initialize the battery monitor state.
  */
 //--------------------------------------------------------------------------------------------------
+static void InitMonitoringState(void)
+{
+    // Read the battery technology configuration settings from the Config Tree.
+    char type[MA_BATTERY_MAX_BATT_TYPE_STR_LEN + 1];
+    uint16_t capacity; // mAh
+    uint16_t voltage; // mV
+    le_result_t result = ma_battery_GetTechnology(type, sizeof(type), &capacity, &voltage);
+    if (result != LE_OK)
+    {
+        LE_ERROR("Battery monitor calibration will have to wait until configuration is performed.");
+        return;
+    }
 
+    dhubIO_PushString("type/tech", 0, type);
+    dhubIO_PushNumeric("type/voltage", 0, voltage);
+    dhubIO_PushNumeric("type/capacity", 0, capacity);
+
+    // Read the present charge condition of the battery.
+    char chargingStatus[512];
+    ReadStringFromFile(StatusPath, chargingStatus, sizeof(chargingStatus));
+    bool isFull = (strcmp(chargingStatus, "Full") == 0);
+
+    // If the battery is full,
+    if (isFull)
+    {
+        LE_DEBUG("Battery is full");
+
+        dhubIO_PushNumeric("charge/percent", 0, 100.0);
+
+        // Tell the battery monitoring driver that battery's present charge level is
+        // equal to the maximum configured capacity.
+        UpdateChargeLevel(capacity);
+
+        // Update the Data Hub.
+        dhubIO_PushNumeric("charge/mAh", 0, (double)capacity);
+    }
+    // But, if the battery is not full,
+    else
+    {
+        LE_DEBUG("Battery not full");
+
+        // Since we have no way of knowing what the actual charge level of the battery
+        // is, tell the battery monitoring driver the battery's present charge is half its
+        // maximum capacity.  When the battery charger later signals a "full" condition,
+        // we'll update this again.  Otherwise, we let the battery monitoring driver update
+        // it as the battery charges and drains.
+        UpdateChargeLevel(capacity / 2);
+
+        // Update the Data Hub.
+        dhubIO_PushNumeric("charge/mAh", 0, ((double)capacity) / 2);
+    }
+}
+
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get a printable string describing a health status code.
+ *
+ * @return Ptr to the null-terminated string.
+ */
+//--------------------------------------------------------------------------------------------------
+static const char* GetHealthStr
+(
+    ma_battery_HealthStatus_t healthCode
+)
+{
+    switch (healthCode)
+    {
+        case MA_BATTERY_OVERVOLTAGE:        return "overvoltage";
+        case MA_BATTERY_GOOD:               return "good";
+        case MA_BATTERY_COLD:               return "cold";
+        case MA_BATTERY_HOT:                return "hot";
+        case MA_BATTERY_HEALTHUNDEFINED:    return "undefined";
+        case MA_BATTERY_HEALTHERROR:        return "error";
+    }
+
+    LE_CRIT("Unexpected health code %d.", healthCode);
+
+    return "unknown";
+}
+
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Timer handler will monitor information on the battery charge status
+ * If indication is that battery is full, then it will update the LTC charge register to
+ * maximum battery charge capacity in mAh
+ */
+//--------------------------------------------------------------------------------------------------
 static void batteryTimer
 (
     le_timer_Ref_t batteryTimerRef
 )
 {
-    static ma_battery_ChargeCondition_t oldChargeStatus = MA_BATTERY_CHARGEUNDEFINED;
-    static ma_battery_HealthCondition_t oldHealthStatus = MA_BATTERY_HEALTHUNDEFINED;
+    static ma_battery_ChargingStatus_t oldChargingStatus = MA_BATTERY_CHARGEUNDEFINED;
+    static ma_battery_HealthStatus_t oldHealthStatus = MA_BATTERY_HEALTHUNDEFINED;
 
-    LE_INFO("**********************");
-    le_result_t r;
-    // char statusPath[256], chargeCondition[512],
-    char capacityPath[256];
-    int32_t chargeNow;
-
-    int capacityPathLen = snprintf(capacityPath, sizeof(capacityPath), MonitorStr, ChargeNowStr);
-    LE_ASSERT(capacityPathLen < sizeof(capacityPath));
-
-    int32_t batteryConfigCapacity;
-    le_cfg_IteratorRef_t iteratorRef = le_cfg_CreateReadTxn("batteryInfo");
-    if (!le_cfg_NodeExists(iteratorRef, ""))
+    ma_battery_ChargingStatus_t chargingStatus = ma_battery_GetChargingStatus();
+    if (chargingStatus != oldChargingStatus)
     {
-        LE_WARN("Battery configuration not found");
-        le_cfg_CancelTxn(iteratorRef);
+        ReportChargingStatusChange(chargingStatus);
+        oldChargingStatus = chargingStatus;
+
+        dhubIO_PushBoolean("charging", 0, (chargingStatus == MA_BATTERY_CHARGING));
+    }
+
+    ma_battery_HealthStatus_t healthStatus = ma_battery_GetHealthStatus();
+    if (healthStatus != oldHealthStatus)
+    {
+        ReportHealthStatusChange(healthStatus);
+        oldHealthStatus = healthStatus;
+
+        dhubIO_PushString("health", 0, GetHealthStr(healthStatus));
+    }
+
+    int32_t capacity = le_cfg_QuickGetInt("batteryInfo/capacity", -1);
+    if (capacity < 0)
+    {
+        LE_WARN("Battery capacity configuration not found");
+        return;
+    }
+
+    uint16_t chargeRemaining;
+
+    if (chargingStatus == MA_BATTERY_FULL)
+    {
+        // The battery is full, so the charge remaining must be the full capacity.
+        chargeRemaining = capacity;
+
+        // Auto-calibrate the battery current monitor by telling it that the battery now has the
+        // configured maximum charge.
+        UpdateChargeLevel(capacity);
     }
     else
     {
-        batteryConfigCapacity = le_cfg_GetInt(iteratorRef, "capacity", -1);
-        le_cfg_CancelTxn(iteratorRef);
-        if (batteryConfigCapacity < 0)
+        // Ask the battery current monitor how much charge it thinks is left.
+        if (ma_battery_GetChargeRemaining(&chargeRemaining) != LE_OK)
         {
-            LE_WARN("No capacity has been set");
+            LE_WARN("Couldn't read battery level");
+
             return;
         }
+    }
 
-        ma_battery_ChargeCondition_t chargeStatus = ma_battery_GetChargeStatus();
+    double percentage = 100 * ((double)chargeRemaining / (double)capacity);
 
-        if (chargeStatus != oldChargeStatus)
-        {
-            LE_INFO("********checking charge Status");
-            CheckAlarmChargeEvent(chargeStatus);
-            oldChargeStatus = chargeStatus;
-        }
+    dhubIO_PushNumeric("charge/mAh", 0, (double)chargeRemaining);
+    dhubIO_PushNumeric("charge/percent", 0, percentage);
 
-        ma_battery_HealthCondition_t healthStatus = ma_battery_GetHealthStatus();
-        if (healthStatus != oldHealthStatus)
-        {
-            CheckAlarmHealthEvent(healthStatus);
-            oldHealthStatus = healthStatus;
-        }
+    CheckBatteryLevelAlarm((unsigned int)round(percentage));
 
-        if (chargeStatus == MA_BATTERY_FULL)
-        {
-            WriteIntToFile(capacityPath, batteryConfigCapacity * 1000);
-            ChargeRemaining = batteryConfigCapacity;
-        }
-        else
-        {
-            r = ReadIntFromFile(capacityPath, &chargeNow);
-            if (r == LE_OK)
-            {
-                ChargeRemaining = chargeNow / 1000;
-            }
-            else
-            {
-                LE_WARN("Couldn't read battery level");
-                return;
-            }
-        }
+    double voltage;
+    le_result_t r = ma_battery_GetVoltage(&voltage);
+    if (r == LE_OK)
+    {
+        dhubIO_PushNumeric("voltage", 0, voltage);
+    }
 
-        int percentage = round(100 * (double)ChargeRemaining / (double)batteryConfigCapacity);
-        CheckBatteryLevelEvent(percentage);
+    double degC;
+    r = ma_battery_GetTemp(&degC);
+    if (r == LE_OK)
+    {
+        dhubIO_PushNumeric("temperature", 0, degC);
     }
 }
 
 
 COMPONENT_INIT
 {
-    LE_INFO("---------------------- Battery Service time started");
-
     le_msg_AddServiceCloseHandler(ma_battery_GetServiceRef(), ClientSessionClosedHandler, NULL);
 
-    LevelEventPool   = le_mem_CreatePool("batt_events", sizeof(struct LevelEventRegistration));
-    LevelEventRefMap = le_ref_CreateMap("batt_events", 4);
+    LevelAlarmPool   = le_mem_CreatePool("batt_events", sizeof(LevelAlarmReg_t));
+    LevelAlarmRefMap = le_ref_CreateMap("batt_events", 4);
 
-    AlarmChargePool   = le_mem_CreatePool("charge_events", sizeof(struct AlarmChargeRegistration));
-    AlarmChargeRefMap = le_ref_CreateMap("charge_events", 4);
+    ChargingStatusRegPool   = le_mem_CreatePool("charge_events", sizeof(ChargingStatusReg_t));
+    ChargingStatusRegRefMap = le_ref_CreateMap("charge_events", 4);
 
-    AlarmHealthPool   = le_mem_CreatePool("health_events", sizeof(struct AlarmHealthRegistration));
-    AlarmHealthRefMap = le_ref_CreateMap("health_events", 4);
+    HealthStatusRegPool   = le_mem_CreatePool("health_events", sizeof(HealthStatusReg_t));
+    HealthStatusRegRefMap = le_ref_CreateMap("health_events", 4);
 
-    initializationBattery();
+    InitMonitoringState();
+
     le_timer_Ref_t batteryTimerRef = le_timer_Create("Battery Service Timer");
     le_timer_SetMsInterval(batteryTimerRef, BATTERY_SAMPLE_INTERVAL_IN_MILLISECONDS);
     le_timer_SetRepeat(batteryTimerRef, 0);
     le_timer_SetHandler(batteryTimerRef, batteryTimer);
     le_timer_Start(batteryTimerRef);
+
+    // type/tech = a string describing the battery technology.
+    LE_ASSERT(LE_OK == dhubIO_CreateInput("type/tech", DHUBIO_DATA_TYPE_STRING, ""));
+
+    // type/voltage = nominal voltage of the battery when charged.
+    LE_ASSERT(LE_OK == dhubIO_CreateInput("type/voltage", DHUBIO_DATA_TYPE_NUMERIC, "V"));
+
+    // type/capacity = amount of charge the battery can store (mAh).
+    LE_ASSERT(LE_OK == dhubIO_CreateInput("type/capacity", DHUBIO_DATA_TYPE_NUMERIC, "mAh"));
+
+    // health = string describing the health of the battery.
+    LE_ASSERT(LE_OK == dhubIO_CreateInput("health", DHUBIO_DATA_TYPE_STRING, ""));
+
+    // charge/percent = percentage of total charge.
+    LE_ASSERT(LE_OK == dhubIO_CreateInput("charge/percent", DHUBIO_DATA_TYPE_NUMERIC, "%EL"));
+
+    // charge/mAh = charge remaining (mAh).
+    LE_ASSERT(LE_OK == dhubIO_CreateInput("charge/mAh", DHUBIO_DATA_TYPE_NUMERIC, "mAh"));
+
+    // charging = a boolean indicating whether the battery is charging or not.
+    LE_ASSERT(LE_OK == dhubIO_CreateInput("charging", DHUBIO_DATA_TYPE_BOOLEAN, ""));
+
+    // voltage = the voltage at present.
+    LE_ASSERT(LE_OK == dhubIO_CreateInput("voltage", DHUBIO_DATA_TYPE_NUMERIC, "V"));
+
+    // temperature = the temperature of the battery.
+    LE_ASSERT(LE_OK == dhubIO_CreateInput("temperature", DHUBIO_DATA_TYPE_NUMERIC, "degC"));
+
+    LE_INFO("---------------------- Battery Service started");
 }
