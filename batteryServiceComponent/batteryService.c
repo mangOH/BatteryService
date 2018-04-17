@@ -803,9 +803,8 @@ static void initializationBattery(void)
         // Create a read transaction so we can update the tree
         le_cfg_IteratorRef_t iteratorRef = le_cfg_CreateReadTxn("batteryInfo");
 
-        if (le_cfg_NodeExists(iteratorRef, "") == false)
+        if (!le_cfg_NodeExists(iteratorRef, ""))
         {
-            le_cfg_CancelTxn(iteratorRef);
             LE_WARN("Battery configuration not found");
         }
         else
@@ -833,9 +832,8 @@ static void initializationBattery(void)
         LE_DEBUG("Battery not full");
         le_cfg_IteratorRef_t iteratorRef = le_cfg_CreateReadTxn("batteryInfo");
 
-        if (le_cfg_NodeExists(iteratorRef, "") == false)
+        if (!le_cfg_NodeExists(iteratorRef, ""))
         {
-            le_cfg_CancelTxn(iteratorRef);
             LE_WARN("Battery configuration not found");
         }
         else
