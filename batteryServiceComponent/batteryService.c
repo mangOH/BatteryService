@@ -14,11 +14,11 @@
 
 #define BATTERY_SAMPLE_INTERVAL_IN_MILLISECONDS 10000
 
-static const char ChargerStr[] = "/sys/devices/i2c-0/i2c-2/2-006b/power_supply/bq24190-charger/%s";
+static const char ChargerStr[] = "/sys/bus/i2c/devices/%d-006b/power_supply/bq24190-charger/%s";
 static const char HealthStr[]  = "health";
-static const char BatteryStr[] = "/sys/devices/i2c-0/i2c-2/2-006b/power_supply/bq24190-battery/%s";
+static const char BatteryStr[] = "/sys/bus/i2c/devices/%d-006b/power_supply/bq24190-battery/%s";
 static const char StatusStr[]  = "status";
-static const char MonitorStr[] = "/sys/devices/i2c-0/i2c-2/2-0064/power_supply/LTC2942/%s";
+static const char MonitorStr[] = "/sys/bus/i2c/devices/%d-0064/power_supply/LTC2942/%s";
 static const char VoltageStr[] = "voltage_now";
 static const char TempStr[]    = "temp";
 static const char ChargeNowStr[] = "charge_now";
@@ -488,7 +488,7 @@ ma_battery_HealthCondition_t ma_battery_GetHealthStatus(void)
     le_result_t r;
     char path[256], healthValue[512];
 
-    int pathLen = snprintf(path, sizeof(path), ChargerStr, HealthStr);
+    int pathLen = snprintf(path, sizeof(path), ChargerStr, MANGOH_I2C_BUS_BATTERY, HealthStr);
     LE_ASSERT(pathLen < sizeof(path));
 
 
@@ -541,7 +541,7 @@ ma_battery_ChargeCondition_t ma_battery_GetChargeStatus(void)
     le_result_t r;
     char path[256], chargeCondition[512];
 
-    int pathLen = snprintf(path, sizeof(path), BatteryStr, StatusStr);
+    int pathLen = snprintf(path, sizeof(path), BatteryStr, MANGOH_I2C_BUS_BATTERY, StatusStr);
     LE_ASSERT(pathLen < sizeof(path));
 
 
@@ -592,7 +592,7 @@ le_result_t ma_battery_GetVoltage
     int32_t voltcalc;
     char path[256];
 
-    int pathLen = snprintf(path, sizeof(path), MonitorStr, VoltageStr);
+    int pathLen = snprintf(path, sizeof(path), MonitorStr, MANGOH_I2C_BUS_BATTERY, VoltageStr);
     LE_ASSERT(pathLen < sizeof(path));
 
 
@@ -627,7 +627,7 @@ le_result_t ma_battery_GetTemp
     int32_t tempcalc;
     char path[256];
 
-    int pathLen = snprintf(path, sizeof(path), MonitorStr, TempStr);
+    int pathLen = snprintf(path, sizeof(path), MonitorStr, MANGOH_I2C_BUS_BATTERY, TempStr);
     LE_ASSERT(pathLen < sizeof(path));
 
 
@@ -662,7 +662,7 @@ le_result_t ma_battery_GetChargeRemaining
     int32_t chargeNow;
     char path[256];
 
-    int pathLen = snprintf(path, sizeof(path), MonitorStr, ChargeNowStr);
+    int pathLen = snprintf(path, sizeof(path), MonitorStr, MANGOH_I2C_BUS_BATTERY, ChargeNowStr);
     LE_ASSERT(pathLen < sizeof(path));
 
 
@@ -697,7 +697,7 @@ le_result_t ma_battery_GetPercentRemaining
     int32_t chargeNow;
     char path[256];
 
-    int pathLen = snprintf(path, sizeof(path), MonitorStr, ChargeNowStr);
+    int pathLen = snprintf(path, sizeof(path), MonitorStr, MANGOH_I2C_BUS_BATTERY, ChargeNowStr);
     LE_ASSERT(pathLen < sizeof(path));
 
     le_cfg_IteratorRef_t iteratorRef = le_cfg_CreateReadTxn("batteryInfo");
@@ -750,7 +750,7 @@ bool ma_battery_Present(void)
     int32_t chargecalc;
     char path[256];
 
-    int pathLen = snprintf(path, sizeof(path), MonitorStr, PresenceStr);
+    int pathLen = snprintf(path, sizeof(path), MonitorStr, MANGOH_I2C_BUS_BATTERY, PresenceStr);
     LE_ASSERT(pathLen < sizeof(path));
 
 
@@ -790,10 +790,11 @@ static void initializationBattery(void)
     // le_result_t r;
     char path[256], chargeCondition[512], setcapacity[256];
     int uaH;
-    int pathLen = snprintf(path, sizeof(path), BatteryStr, StatusStr);
+    int pathLen = snprintf(path, sizeof(path), BatteryStr, MANGOH_I2C_BUS_BATTERY, StatusStr);
     LE_ASSERT(pathLen < sizeof(path));
 
-    int setcapacityLen = snprintf(setcapacity, sizeof(setcapacity), MonitorStr, ChargeNowStr);
+    int setcapacityLen = snprintf(
+        setcapacity, sizeof(setcapacity), MonitorStr, MANGOH_I2C_BUS_BATTERY, ChargeNowStr);
     LE_ASSERT(setcapacityLen < sizeof(setcapacity));
 
     ReadStringFromFile(path, chargeCondition, sizeof(chargeCondition));
@@ -879,7 +880,8 @@ static void batteryTimer
     char capacityPath[256];
     int32_t chargeNow;
 
-    int capacityPathLen = snprintf(capacityPath, sizeof(capacityPath), MonitorStr, ChargeNowStr);
+    int capacityPathLen = snprintf(
+        capacityPath, sizeof(capacityPath), MonitorStr, MANGOH_I2C_BUS_BATTERY, ChargeNowStr);
     LE_ASSERT(capacityPathLen < sizeof(capacityPath));
 
     int32_t batteryConfigCapacity;
