@@ -16,10 +16,11 @@
 
 #define BATTERY_SAMPLE_INTERVAL_IN_MILLISECONDS 10000
 
-static const char ChargerStr[] = "/sys/devices/i2c-0/i2c-2/2-006b/power_supply/bq24190-charger/%s";
+static const char ChargerStr[] = "/sys/bus/i2c/devices/%d-006b/power_supply/bq24190-charger/%s";
 static const char HealthStr[]  = "health";
-static const char StatusPath[] = "/sys/devices/i2c-0/i2c-2/2-006b/power_supply/bq24190-battery/status";
-static const char MonitorStr[] = "/sys/devices/i2c-0/i2c-2/2-0064/power_supply/LTC2942/%s";
+static const char BatteryStr[] = "/sys/bus/i2c/devices/%d-006b/power_supply/bq24190-battery/%s";
+static const char StatusStr[]  = "status";
+static const char MonitorStr[] = "/sys/bus/i2c/devices/%d-0064/power_supply/LTC2942/%s";
 static const char VoltageStr[] = "voltage_now";
 static const char TempStr[]    = "temp";
 static const char ChargeNowStr[] = "charge_now";
@@ -461,7 +462,7 @@ le_result_t ma_battery_GetTechnology
         goto cleanup;
     }
 
-    // Get the battery capacity (or -1 if not found)
+    // Get the battery capacity in mAh (or -1 if not found)
     int32_t capacity = le_cfg_GetInt(iteratorRef, "capacity", -1);
     if (capacity < 0)
     {
@@ -498,7 +499,7 @@ cleanup:
 ma_battery_HealthStatus_t ma_battery_GetHealthStatus(void)
 {
     char path[256];
-    int pathLen = snprintf(path, sizeof(path), ChargerStr, HealthStr);
+    int pathLen = snprintf(path, sizeof(path), ChargerStr, MANGOH_I2C_BUS_BATTERY, HealthStr);
     LE_ASSERT(pathLen < sizeof(path));
 
     char healthValue[512];
@@ -544,9 +545,12 @@ ma_battery_HealthStatus_t ma_battery_GetHealthStatus(void)
 //--------------------------------------------------------------------------------------------------
 ma_battery_ChargingStatus_t ma_battery_GetChargingStatus(void)
 {
-    char chargingStatus[512];
+    char path[256];
+    int pathLen = snprintf(path, sizeof(path), BatteryStr, MANGOH_I2C_BUS_BATTERY, StatusStr);
+    LE_ASSERT(pathLen < sizeof(path));
 
-    le_result_t r = ReadStringFromFile(StatusPath, chargingStatus, sizeof(chargingStatus));
+    char chargingStatus[512];
+    le_result_t r = ReadStringFromFile(path, chargingStatus, sizeof(chargingStatus));
 
     if (r == LE_OK)
     {
@@ -592,7 +596,8 @@ le_result_t ma_battery_GetVoltage
 )
 {
     char path[256];
-    int pathLen = snprintf(path, sizeof(path), MonitorStr, VoltageStr);
+
+    int pathLen = snprintf(path, sizeof(path), MonitorStr, MANGOH_I2C_BUS_BATTERY, VoltageStr);
     LE_ASSERT(pathLen < sizeof(path));
 
     int32_t mV;
@@ -620,7 +625,8 @@ le_result_t ma_battery_GetTemp
 )
 {
     char path[256];
-    int pathLen = snprintf(path, sizeof(path), MonitorStr, TempStr);
+
+    int pathLen = snprintf(path, sizeof(path), MonitorStr, MANGOH_I2C_BUS_BATTERY, TempStr);
     LE_ASSERT(pathLen < sizeof(path));
 
     int32_t tempcalc;  // In centidegrees Celcius.
@@ -649,7 +655,8 @@ le_result_t ma_battery_GetChargeRemaining
 )
 {
     char path[256];
-    int pathLen = snprintf(path, sizeof(path), MonitorStr, ChargeNowStr);
+
+    int pathLen = snprintf(path, sizeof(path), MonitorStr, MANGOH_I2C_BUS_BATTERY, ChargeNowStr);
     LE_ASSERT(pathLen < sizeof(path));
 
     int32_t uAh;
@@ -711,7 +718,8 @@ le_result_t ma_battery_GetPercentRemaining
 bool ma_battery_Present(void)
 {
     char path[256];
-    int pathLen = snprintf(path, sizeof(path), MonitorStr, PresenceStr);
+
+    int pathLen = snprintf(path, sizeof(path), MonitorStr, MANGOH_I2C_BUS_BATTERY, PresenceStr);
     LE_ASSERT(pathLen < sizeof(path));
 
     int32_t present;  // 0 = not present, 1 = present.
@@ -759,7 +767,7 @@ static void UpdateChargeLevel
         LE_DEBUG("battery %d", uAh);
 
         char path[256];
-        int len = snprintf(path, sizeof(path), MonitorStr, ChargeNowStr);
+        int len = snprintf(path, sizeof(path), MonitorStr, MANGOH_I2C_BUS_BATTERY, ChargeNowStr);
         LE_ASSERT(len < sizeof(path));
         WriteIntToFile(path, uAh);
     }
@@ -793,12 +801,10 @@ static void InitMonitoringState(void)
     dhubIO_PushNumeric("type/capacity", 0, capacity);
 
     // Read the present charge condition of the battery.
-    char chargingStatus[512];
-    ReadStringFromFile(StatusPath, chargingStatus, sizeof(chargingStatus));
-    bool isFull = (strcmp(chargingStatus, "Full") == 0);
+    ma_battery_ChargingStatus_t chargingStatus = ma_battery_GetChargingStatus();
 
     // If the battery is full,
-    if (isFull)
+    if (chargingStatus == MA_BATTERY_FULL)
     {
         LE_DEBUG("Battery is full");
 
