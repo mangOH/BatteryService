@@ -950,25 +950,6 @@ static void batteryTimer
 
 COMPONENT_INIT
 {
-    le_msg_AddServiceCloseHandler(ma_battery_GetServiceRef(), ClientSessionClosedHandler, NULL);
-
-    LevelAlarmPool   = le_mem_CreatePool("batt_events", sizeof(LevelAlarmReg_t));
-    LevelAlarmRefMap = le_ref_CreateMap("batt_events", 4);
-
-    ChargingStatusRegPool   = le_mem_CreatePool("charge_events", sizeof(ChargingStatusReg_t));
-    ChargingStatusRegRefMap = le_ref_CreateMap("charge_events", 4);
-
-    HealthStatusRegPool   = le_mem_CreatePool("health_events", sizeof(HealthStatusReg_t));
-    HealthStatusRegRefMap = le_ref_CreateMap("health_events", 4);
-
-    InitMonitoringState();
-
-    le_timer_Ref_t batteryTimerRef = le_timer_Create("Battery Service Timer");
-    le_timer_SetMsInterval(batteryTimerRef, BATTERY_SAMPLE_INTERVAL_IN_MILLISECONDS);
-    le_timer_SetRepeat(batteryTimerRef, 0);
-    le_timer_SetHandler(batteryTimerRef, batteryTimer);
-    le_timer_Start(batteryTimerRef);
-
     // type/tech = a string describing the battery technology.
     LE_ASSERT(LE_OK == dhubIO_CreateInput("type/tech", DHUBIO_DATA_TYPE_STRING, ""));
 
@@ -995,6 +976,25 @@ COMPONENT_INIT
 
     // temperature = the temperature of the battery.
     LE_ASSERT(LE_OK == dhubIO_CreateInput("temperature", DHUBIO_DATA_TYPE_NUMERIC, "degC"));
+
+    le_msg_AddServiceCloseHandler(ma_battery_GetServiceRef(), ClientSessionClosedHandler, NULL);
+
+    LevelAlarmPool   = le_mem_CreatePool("batt_events", sizeof(LevelAlarmReg_t));
+    LevelAlarmRefMap = le_ref_CreateMap("batt_events", 4);
+
+    ChargingStatusRegPool   = le_mem_CreatePool("charge_events", sizeof(ChargingStatusReg_t));
+    ChargingStatusRegRefMap = le_ref_CreateMap("charge_events", 4);
+
+    HealthStatusRegPool   = le_mem_CreatePool("health_events", sizeof(HealthStatusReg_t));
+    HealthStatusRegRefMap = le_ref_CreateMap("health_events", 4);
+
+    InitMonitoringState();
+
+    le_timer_Ref_t batteryTimerRef = le_timer_Create("Battery Service Timer");
+    le_timer_SetMsInterval(batteryTimerRef, BATTERY_SAMPLE_INTERVAL_IN_MILLISECONDS);
+    le_timer_SetRepeat(batteryTimerRef, 0);
+    le_timer_SetHandler(batteryTimerRef, batteryTimer);
+    le_timer_Start(batteryTimerRef);
 
     LE_INFO("---------------------- Battery Service started");
 }
