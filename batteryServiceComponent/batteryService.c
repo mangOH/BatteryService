@@ -36,6 +36,17 @@ static le_mem_PoolRef_t HealthStatusRegPool;
 static le_ref_MapRef_t HealthStatusRegRefMap;
 
 
+#define RES_PATH_TECH        "tech"
+#define RES_PATH_CAPACITY    "capacity"
+#define RES_PATH_NOM_VOLTAGE "nominalVoltage"
+#define RES_PATH_VOLTAGE     "voltage"
+#define RES_PATH_HEALTH      "health"
+#define RES_PATH_PERCENT     "percent"
+#define RES_PATH_ENERGY      "energy"
+#define RES_PATH_CHARGING    "charging"
+#define RES_PATH_TEMPERATURE "temperature"
+
+
 typedef enum
 {
     LEVEL_HIGH,
@@ -429,10 +440,10 @@ void ma_adminbattery_SetTechnology
     // Commit the transaction to make sure new settings are written to config tree
     le_cfg_CommitTxn(iteratorRef);
 
-    // Push this info to the Data Hub.
-    dhubIO_PushString("type/tech", 0, batteryType);
-    dhubIO_PushNumeric("type/voltage", 0, ((double)milliVolts) / 1000.0);
-    dhubIO_PushNumeric("type/capacity", 0, mAh);
+    // Update this info in the Data Hub.
+    dhubIO_SetStringDefault(RES_PATH_TECH, batteryType);
+    dhubIO_SetNumericDefault(RES_PATH_NOM_VOLTAGE, ((double)milliVolts) / 1000.0);
+    dhubIO_SetNumericDefault(RES_PATH_CAPACITY, mAh);
 }
 
 
@@ -796,9 +807,9 @@ static void InitMonitoringState(void)
         return;
     }
 
-    dhubIO_PushString("type/tech", 0, type);
-    dhubIO_PushNumeric("type/voltage", 0, voltage);
-    dhubIO_PushNumeric("type/capacity", 0, capacity);
+    dhubIO_SetStringDefault(RES_PATH_TECH, type);
+    dhubIO_SetNumericDefault(RES_PATH_NOM_VOLTAGE, ((double)voltage) / 1000);
+    dhubIO_SetNumericDefault(RES_PATH_CAPACITY, capacity);
 
     // Read the present charge condition of the battery.
     ma_battery_ChargingStatus_t chargingStatus = ma_battery_GetChargingStatus();
@@ -808,14 +819,14 @@ static void InitMonitoringState(void)
     {
         LE_DEBUG("Battery is full");
 
-        dhubIO_PushNumeric("charge/percent", 0, 100.0);
+        dhubIO_PushNumeric(RES_PATH_PERCENT, 0, 100.0);
 
         // Tell the battery monitoring driver that battery's present charge level is
         // equal to the maximum configured capacity.
         UpdateChargeLevel(capacity);
 
         // Update the Data Hub.
-        dhubIO_PushNumeric("charge/mAh", 0, (double)capacity);
+        dhubIO_PushNumeric(RES_PATH_ENERGY, 0, (double)capacity);
     }
     // But, if the battery is not full,
     else
@@ -828,9 +839,6 @@ static void InitMonitoringState(void)
         // we'll update this again.  Otherwise, we let the battery monitoring driver update
         // it as the battery charges and drains.
         UpdateChargeLevel(capacity / 2);
-
-        // Update the Data Hub.
-        dhubIO_PushNumeric("charge/mAh", 0, ((double)capacity) / 2);
     }
 }
 
@@ -884,7 +892,7 @@ static void batteryTimer
         ReportChargingStatusChange(chargingStatus);
         oldChargingStatus = chargingStatus;
 
-        dhubIO_PushBoolean("charging", 0, (chargingStatus == MA_BATTERY_CHARGING));
+        dhubIO_PushBoolean(RES_PATH_CHARGING, 0, (chargingStatus == MA_BATTERY_CHARGING));
     }
 
     ma_battery_HealthStatus_t healthStatus = ma_battery_GetHealthStatus();
@@ -893,7 +901,7 @@ static void batteryTimer
         ReportHealthStatusChange(healthStatus);
         oldHealthStatus = healthStatus;
 
-        dhubIO_PushString("health", 0, GetHealthStr(healthStatus));
+        dhubIO_PushString(RES_PATH_HEALTH, 0, GetHealthStr(healthStatus));
     }
 
     int32_t capacity = le_cfg_QuickGetInt("batteryInfo/capacity", -1);
@@ -927,8 +935,8 @@ static void batteryTimer
 
     double percentage = 100 * ((double)chargeRemaining / (double)capacity);
 
-    dhubIO_PushNumeric("charge/mAh", 0, (double)chargeRemaining);
-    dhubIO_PushNumeric("charge/percent", 0, percentage);
+    dhubIO_PushNumeric(RES_PATH_ENERGY, 0, (double)chargeRemaining);
+    dhubIO_PushNumeric(RES_PATH_PERCENT, 0, percentage);
 
     CheckBatteryLevelAlarm((unsigned int)round(percentage));
 
@@ -936,14 +944,14 @@ static void batteryTimer
     le_result_t r = ma_battery_GetVoltage(&voltage);
     if (r == LE_OK)
     {
-        dhubIO_PushNumeric("voltage", 0, voltage);
+        dhubIO_PushNumeric(RES_PATH_VOLTAGE, 0, voltage);
     }
 
     double degC;
     r = ma_battery_GetTemp(&degC);
     if (r == LE_OK)
     {
-        dhubIO_PushNumeric("temperature", 0, degC);
+        dhubIO_PushNumeric(RES_PATH_TEMPERATURE, 0, degC);
     }
 }
 
@@ -951,31 +959,31 @@ static void batteryTimer
 COMPONENT_INIT
 {
     // type/tech = a string describing the battery technology.
-    LE_ASSERT(LE_OK == dhubIO_CreateInput("type/tech", DHUBIO_DATA_TYPE_STRING, ""));
+    LE_ASSERT(LE_OK == dhubIO_CreateOutput(RES_PATH_TECH, DHUBIO_DATA_TYPE_STRING, ""));
 
     // type/voltage = nominal voltage of the battery when charged.
-    LE_ASSERT(LE_OK == dhubIO_CreateInput("type/voltage", DHUBIO_DATA_TYPE_NUMERIC, "V"));
+    LE_ASSERT(LE_OK == dhubIO_CreateOutput(RES_PATH_NOM_VOLTAGE, DHUBIO_DATA_TYPE_NUMERIC, "V"));
 
     // type/capacity = amount of charge the battery can store (mAh).
-    LE_ASSERT(LE_OK == dhubIO_CreateInput("type/capacity", DHUBIO_DATA_TYPE_NUMERIC, "mAh"));
+    LE_ASSERT(LE_OK == dhubIO_CreateOutput(RES_PATH_CAPACITY, DHUBIO_DATA_TYPE_NUMERIC, "mAh"));
 
     // health = string describing the health of the battery.
-    LE_ASSERT(LE_OK == dhubIO_CreateInput("health", DHUBIO_DATA_TYPE_STRING, ""));
+    LE_ASSERT(LE_OK == dhubIO_CreateInput(RES_PATH_HEALTH, DHUBIO_DATA_TYPE_STRING, ""));
 
     // charge/percent = percentage of total charge.
-    LE_ASSERT(LE_OK == dhubIO_CreateInput("charge/percent", DHUBIO_DATA_TYPE_NUMERIC, "%EL"));
+    LE_ASSERT(LE_OK == dhubIO_CreateInput(RES_PATH_PERCENT, DHUBIO_DATA_TYPE_NUMERIC, "%EL"));
 
     // charge/mAh = charge remaining (mAh).
-    LE_ASSERT(LE_OK == dhubIO_CreateInput("charge/mAh", DHUBIO_DATA_TYPE_NUMERIC, "mAh"));
+    LE_ASSERT(LE_OK == dhubIO_CreateInput(RES_PATH_ENERGY, DHUBIO_DATA_TYPE_NUMERIC, "mAh"));
 
     // charging = a boolean indicating whether the battery is charging or not.
-    LE_ASSERT(LE_OK == dhubIO_CreateInput("charging", DHUBIO_DATA_TYPE_BOOLEAN, ""));
+    LE_ASSERT(LE_OK == dhubIO_CreateInput(RES_PATH_CHARGING, DHUBIO_DATA_TYPE_BOOLEAN, ""));
 
     // voltage = the voltage at present.
-    LE_ASSERT(LE_OK == dhubIO_CreateInput("voltage", DHUBIO_DATA_TYPE_NUMERIC, "V"));
+    LE_ASSERT(LE_OK == dhubIO_CreateInput(RES_PATH_VOLTAGE, DHUBIO_DATA_TYPE_NUMERIC, "V"));
 
     // temperature = the temperature of the battery.
-    LE_ASSERT(LE_OK == dhubIO_CreateInput("temperature", DHUBIO_DATA_TYPE_NUMERIC, "degC"));
+    LE_ASSERT(LE_OK == dhubIO_CreateInput(RES_PATH_TEMPERATURE, DHUBIO_DATA_TYPE_NUMERIC, "degC"));
 
     le_msg_AddServiceCloseHandler(ma_battery_GetServiceRef(), ClientSessionClosedHandler, NULL);
 
