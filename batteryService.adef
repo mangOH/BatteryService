@@ -1,6 +1,6 @@
 version: 1.0
 sandboxed: false
-start: manual
+start: auto
 
 executables:
 {
