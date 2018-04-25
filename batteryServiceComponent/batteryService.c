@@ -411,6 +411,79 @@ static void ClientSessionClosedHandler
 
 //--------------------------------------------------------------------------------------------------
 /**
+ * Write the present charge level to the battery monitoring driver.
+ *
+ * This is only done to correct the monitoring driver's idea of how much charge is presently stored
+ * in the battery.  Normally the driver updates this itself as the battery drains and charges.
+ */
+//--------------------------------------------------------------------------------------------------
+static void UpdateChargeLevel
+(
+    int mAh
+)
+{
+    if (mAh > 0)
+    {
+        int uAh = mAh * 1000;
+
+        LE_DEBUG("battery %d", uAh);
+
+        char path[256];
+        int len = snprintf(path, sizeof(path), MonitorStr, MANGOH_I2C_BUS_BATTERY, ChargeNowStr);
+        LE_ASSERT(len < sizeof(path));
+        WriteIntToFile(path, uAh);
+    }
+    else
+    {
+        LE_ERROR("Charge level invalid. (%d mAh)", mAh);
+    }
+}
+
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Run the calibration algorithm.
+ */
+//--------------------------------------------------------------------------------------------------
+static void Calibrate
+(
+    double capacity ///< mAh
+)
+//--------------------------------------------------------------------------------------------------
+{
+    // Read the present charge condition of the battery.
+    ma_battery_ChargingStatus_t chargingStatus = ma_battery_GetChargingStatus();
+
+    // If the battery is full,
+    if (chargingStatus == MA_BATTERY_FULL)
+    {
+        LE_DEBUG("Battery is full");
+
+        // Tell the battery monitoring driver that battery's present charge level is
+        // equal to the maximum configured capacity.
+        UpdateChargeLevel(capacity);
+
+        // Update the Data Hub.
+        dhubIO_PushNumeric(RES_PATH_PERCENT, 0, 100.0);
+        dhubIO_PushNumeric(RES_PATH_ENERGY, 0, (double)capacity);
+    }
+    // But, if the battery is not full,
+    else
+    {
+        LE_DEBUG("Battery not full");
+
+        // Since we have no way of knowing what the actual charge level of the battery
+        // is, tell the battery monitoring driver the battery's present charge is half its
+        // maximum capacity.  When the battery charger later signals a "full" condition,
+        // we'll update this again.  Otherwise, we let the battery monitoring driver update
+        // it as the battery charges and drains.
+        UpdateChargeLevel(capacity / 2);
+    }
+}
+
+
+//--------------------------------------------------------------------------------------------------
+/**
  * Set the battery technology.
  */
 //--------------------------------------------------------------------------------------------------
@@ -447,6 +520,8 @@ static void SetCapacity
     {
         le_cfg_QuickSetInt("batteryInfo/capacity", (int32_t)capacity);
     }
+
+    Calibrate(capacity);
 }
 
 
@@ -509,6 +584,8 @@ void ma_adminbattery_SetTechnology
     dhubIO_SetStringDefault(RES_PATH_TECH, batteryType);
     dhubIO_SetNumericDefault(RES_PATH_NOM_VOLTAGE, ((double)milliVolts) / 1000.0);
     dhubIO_SetNumericDefault(RES_PATH_CAPACITY, mAh);
+
+    Calibrate(mAh);
 }
 
 
@@ -825,37 +902,6 @@ bool ma_battery_Present(void)
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Write the present charge level to the battery monitoring driver.
- *
- * This is only done to correct the monitoring driver's idea of how much charge is presently stored
- * in the battery.  Normally the driver updates this itself as the battery drains and charges.
- */
-//--------------------------------------------------------------------------------------------------
-static void UpdateChargeLevel
-(
-    int mAh
-)
-{
-    if (mAh > 0)
-    {
-        int uAh = mAh * 1000;
-
-        LE_DEBUG("battery %d", uAh);
-
-        char path[256];
-        int len = snprintf(path, sizeof(path), MonitorStr, MANGOH_I2C_BUS_BATTERY, ChargeNowStr);
-        LE_ASSERT(len < sizeof(path));
-        WriteIntToFile(path, uAh);
-    }
-    else
-    {
-        LE_ERROR("Charge level invalid. (%d mAh)", mAh);
-    }
-}
-
-
-//--------------------------------------------------------------------------------------------------
-/**
  * Initialize the battery monitor state.
  */
 //--------------------------------------------------------------------------------------------------
@@ -876,35 +922,7 @@ static void InitMonitoringState(void)
     dhubIO_SetNumericDefault(RES_PATH_NOM_VOLTAGE, ((double)voltage) / 1000);
     dhubIO_SetNumericDefault(RES_PATH_CAPACITY, capacity);
 
-    // Read the present charge condition of the battery.
-    ma_battery_ChargingStatus_t chargingStatus = ma_battery_GetChargingStatus();
-
-    // If the battery is full,
-    if (chargingStatus == MA_BATTERY_FULL)
-    {
-        LE_DEBUG("Battery is full");
-
-        dhubIO_PushNumeric(RES_PATH_PERCENT, 0, 100.0);
-
-        // Tell the battery monitoring driver that battery's present charge level is
-        // equal to the maximum configured capacity.
-        UpdateChargeLevel(capacity);
-
-        // Update the Data Hub.
-        dhubIO_PushNumeric(RES_PATH_ENERGY, 0, (double)capacity);
-    }
-    // But, if the battery is not full,
-    else
-    {
-        LE_DEBUG("Battery not full");
-
-        // Since we have no way of knowing what the actual charge level of the battery
-        // is, tell the battery monitoring driver the battery's present charge is half its
-        // maximum capacity.  When the battery charger later signals a "full" condition,
-        // we'll update this again.  Otherwise, we let the battery monitoring driver update
-        // it as the battery charges and drains.
-        UpdateChargeLevel(capacity / 2);
-    }
+    Calibrate(capacity);
 }
 
 
