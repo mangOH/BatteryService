@@ -411,6 +411,71 @@ static void ClientSessionClosedHandler
 
 //--------------------------------------------------------------------------------------------------
 /**
+ * Set the battery technology.
+ */
+//--------------------------------------------------------------------------------------------------
+static void SetTechnology
+(
+    double timestamp,
+    const char* tech,
+    void* contextPtr ///< unused
+)
+//--------------------------------------------------------------------------------------------------
+{
+    le_cfg_QuickSetString("batteryInfo/type", tech);
+}
+
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Set the capacity.
+ */
+//--------------------------------------------------------------------------------------------------
+static void SetCapacity
+(
+    double timestamp,
+    double capacity,  ///< mAh
+    void* contextPtr ///< unused
+)
+//--------------------------------------------------------------------------------------------------
+{
+    if (capacity < 0)
+    {
+        LE_ERROR("Capacity of %lf mAh is out of range.", capacity);
+    }
+    else
+    {
+        le_cfg_QuickSetInt("batteryInfo/capacity", (int32_t)capacity);
+    }
+}
+
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Set the nominal voltage of the battery.
+ */
+//--------------------------------------------------------------------------------------------------
+static void SetNominalVoltage
+(
+    double timestamp,
+    double voltage,  ///< V
+    void* contextPtr ///< unused
+)
+//--------------------------------------------------------------------------------------------------
+{
+    if (voltage < 0)
+    {
+        LE_ERROR("Voltage of %lf V is out of range.", voltage);
+    }
+    else
+    {
+        le_cfg_QuickSetInt("batteryInfo/voltage", (uint32_t)(voltage * 1000)); // stored as mV
+    }
+}
+
+
+//--------------------------------------------------------------------------------------------------
+/**
  * Set the battery technology as set by the battery manufacturer
  *
  * @note this function sets the battery parameters and although is optional but is good to have
@@ -428,7 +493,7 @@ void ma_adminbattery_SetTechnology
     // Create a write transaction so we can update the tree
     le_cfg_IteratorRef_t iteratorRef = le_cfg_CreateWriteTxn("batteryInfo");
 
-    // Set the integer for the battery as it is an enum
+    // Set the battery technology.
     le_cfg_SetString(iteratorRef, "type", batteryType);
 
     // Set the battery capacity as set by the manufacturer
@@ -964,12 +1029,15 @@ COMPONENT_INIT
 {
     // type/tech = a string describing the battery technology.
     LE_ASSERT(LE_OK == dhubIO_CreateOutput(RES_PATH_TECH, DHUBIO_DATA_TYPE_STRING, ""));
+    dhubIO_AddStringPushHandler(RES_PATH_TECH, SetTechnology, NULL);
 
     // type/voltage = nominal voltage of the battery when charged.
     LE_ASSERT(LE_OK == dhubIO_CreateOutput(RES_PATH_NOM_VOLTAGE, DHUBIO_DATA_TYPE_NUMERIC, "V"));
+    dhubIO_AddNumericPushHandler(RES_PATH_NOM_VOLTAGE, SetNominalVoltage, NULL);
 
     // type/capacity = amount of charge the battery can store (mAh).
     LE_ASSERT(LE_OK == dhubIO_CreateOutput(RES_PATH_CAPACITY, DHUBIO_DATA_TYPE_NUMERIC, "mAh"));
+    dhubIO_AddNumericPushHandler(RES_PATH_CAPACITY, SetCapacity, NULL);
 
     // health = string describing the health of the battery.
     LE_ASSERT(LE_OK == dhubIO_CreateInput(RES_PATH_HEALTH, DHUBIO_DATA_TYPE_STRING, ""));
