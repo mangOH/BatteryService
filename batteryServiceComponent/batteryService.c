@@ -39,12 +39,16 @@ static le_ref_MapRef_t HealthStatusRegRefMap;
 #define RES_PATH_TECH        "tech"
 #define RES_PATH_CAPACITY    "capacity"
 #define RES_PATH_NOM_VOLTAGE "nominalVoltage"
+#define RES_PATH_PERIOD      "period"
 #define RES_PATH_VOLTAGE     "voltage"
 #define RES_PATH_HEALTH      "health"
 #define RES_PATH_PERCENT     "percent"
 #define RES_PATH_ENERGY      "energy"
 #define RES_PATH_CHARGING    "charging"
 #define RES_PATH_TEMPERATURE "temperature"
+
+/// The timer used to trigger polling of the battery monitor.
+static le_timer_Ref_t Timer = NULL;
 
 
 typedef enum
@@ -551,6 +555,30 @@ static void SetNominalVoltage
 
 //--------------------------------------------------------------------------------------------------
 /**
+ * Set the timer period.
+ */
+//--------------------------------------------------------------------------------------------------
+static void SetPeriod
+(
+    double timestamp,
+    double period,  ///< seconds
+    void* contextPtr ///< unused
+)
+//--------------------------------------------------------------------------------------------------
+{
+    if (period <= 0)
+    {
+        LE_ERROR("Period of %lf seconds is out of range.", period);
+    }
+    else
+    {
+        le_timer_SetMsInterval(Timer, (uint32_t)(period * 1000));
+    }
+}
+
+
+//--------------------------------------------------------------------------------------------------
+/**
  * Set the battery technology as set by the battery manufacturer
  *
  * @note this function sets the battery parameters and although is optional but is good to have
@@ -1045,34 +1073,39 @@ static void batteryTimer
 
 COMPONENT_INIT
 {
-    // type/tech = a string describing the battery technology.
+    // String describing the battery technology.
     LE_ASSERT(LE_OK == dhubIO_CreateOutput(RES_PATH_TECH, DHUBIO_DATA_TYPE_STRING, ""));
     dhubIO_AddStringPushHandler(RES_PATH_TECH, SetTechnology, NULL);
 
-    // type/voltage = nominal voltage of the battery when charged.
+    // Nominal voltage of the battery when charged.
     LE_ASSERT(LE_OK == dhubIO_CreateOutput(RES_PATH_NOM_VOLTAGE, DHUBIO_DATA_TYPE_NUMERIC, "V"));
     dhubIO_AddNumericPushHandler(RES_PATH_NOM_VOLTAGE, SetNominalVoltage, NULL);
 
-    // type/capacity = amount of charge the battery can store (mAh).
+    // Amount of charge the battery can store (mAh).
     LE_ASSERT(LE_OK == dhubIO_CreateOutput(RES_PATH_CAPACITY, DHUBIO_DATA_TYPE_NUMERIC, "mAh"));
     dhubIO_AddNumericPushHandler(RES_PATH_CAPACITY, SetCapacity, NULL);
 
-    // health = string describing the health of the battery.
+    // Update period (s).
+    LE_ASSERT(LE_OK == dhubIO_CreateOutput(RES_PATH_PERIOD, DHUBIO_DATA_TYPE_NUMERIC, "s"));
+    dhubIO_AddNumericPushHandler(RES_PATH_PERIOD, SetPeriod, NULL);
+    dhubIO_SetNumericDefault(RES_PATH_PERIOD, BATTERY_SAMPLE_INTERVAL_IN_MILLISECONDS);
+
+    // String describing the health of the battery.
     LE_ASSERT(LE_OK == dhubIO_CreateInput(RES_PATH_HEALTH, DHUBIO_DATA_TYPE_STRING, ""));
 
-    // charge/percent = percentage of total charge.
+    // Percentage of total charge.
     LE_ASSERT(LE_OK == dhubIO_CreateInput(RES_PATH_PERCENT, DHUBIO_DATA_TYPE_NUMERIC, "%EL"));
 
-    // charge/mAh = charge remaining (mAh).
+    // Charge remaining (mAh).
     LE_ASSERT(LE_OK == dhubIO_CreateInput(RES_PATH_ENERGY, DHUBIO_DATA_TYPE_NUMERIC, "mAh"));
 
-    // charging = a boolean indicating whether the battery is charging or not.
+    // Boolean indicating whether the battery is charging or not.
     LE_ASSERT(LE_OK == dhubIO_CreateInput(RES_PATH_CHARGING, DHUBIO_DATA_TYPE_BOOLEAN, ""));
 
-    // voltage = the voltage at present.
+    // Voltage at present.
     LE_ASSERT(LE_OK == dhubIO_CreateInput(RES_PATH_VOLTAGE, DHUBIO_DATA_TYPE_NUMERIC, "V"));
 
-    // temperature = the temperature of the battery.
+    // Temperature of the battery.
     LE_ASSERT(LE_OK == dhubIO_CreateInput(RES_PATH_TEMPERATURE, DHUBIO_DATA_TYPE_NUMERIC, "degC"));
 
     le_msg_AddServiceCloseHandler(ma_battery_GetServiceRef(), ClientSessionClosedHandler, NULL);
@@ -1088,11 +1121,11 @@ COMPONENT_INIT
 
     InitMonitoringState();
 
-    le_timer_Ref_t batteryTimerRef = le_timer_Create("Battery Service Timer");
-    le_timer_SetMsInterval(batteryTimerRef, BATTERY_SAMPLE_INTERVAL_IN_MILLISECONDS);
-    le_timer_SetRepeat(batteryTimerRef, 0);
-    le_timer_SetHandler(batteryTimerRef, batteryTimer);
-    le_timer_Start(batteryTimerRef);
+    Timer = le_timer_Create("Battery Service Timer");
+    le_timer_SetMsInterval(Timer, BATTERY_SAMPLE_INTERVAL_IN_MILLISECONDS);
+    le_timer_SetRepeat(Timer, 0);
+    le_timer_SetHandler(Timer, batteryTimer);
+    le_timer_Start(Timer);
 
     LE_INFO("---------------------- Battery Service started");
 }
