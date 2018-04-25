@@ -50,6 +50,8 @@ static le_ref_MapRef_t HealthStatusRegRefMap;
 /// The timer used to trigger polling of the battery monitor.
 static le_timer_Ref_t Timer = NULL;
 
+/// Battery capacity (mAh), or -1 if not configured.
+static int32_t Capacity = -1;
 
 typedef enum
 {
@@ -446,15 +448,17 @@ static void UpdateChargeLevel
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Run the calibration algorithm.
+ * (Re-)Start the calibration algorithm.
  */
 //--------------------------------------------------------------------------------------------------
-static void Calibrate
+static void StartCalibration
 (
-    double capacity ///< mAh
+    int32_t capacity ///< mAh
 )
 //--------------------------------------------------------------------------------------------------
 {
+    Capacity = capacity;
+
     // Read the present charge condition of the battery.
     ma_battery_ChargingStatus_t chargingStatus = ma_battery_GetChargingStatus();
 
@@ -520,12 +524,12 @@ static void SetCapacity
     {
         LE_ERROR("Capacity of %lf mAh is out of range.", capacity);
     }
-    else
+    else if ((uint32_t)capacity != Capacity)
     {
-        le_cfg_QuickSetInt("batteryInfo/capacity", (int32_t)capacity);
-    }
+        le_cfg_QuickSetInt("capacity", (int32_t)capacity);
 
-    Calibrate(capacity);
+        StartCalibration((int32_t)capacity);
+    }
 }
 
 
@@ -613,7 +617,7 @@ void ma_adminbattery_SetTechnology
     dhubIO_SetNumericDefault(RES_PATH_NOM_VOLTAGE, ((double)milliVolts) / 1000.0);
     dhubIO_SetNumericDefault(RES_PATH_CAPACITY, mAh);
 
-    Calibrate(mAh);
+    StartCalibration((int32_t)mAh);
 }
 
 
@@ -644,14 +648,14 @@ le_result_t ma_battery_GetTechnology
     }
 
     // Get the battery capacity in mAh (or -1 if not found)
-    int32_t capacity = le_cfg_GetInt(iteratorRef, "capacity", -1);
-    if (capacity < 0)
+    Capacity = le_cfg_GetInt(iteratorRef, "capacity", -1);
+    if (Capacity < 0)
     {
         LE_ERROR("Cannot get battery capacity");
         result = LE_NOT_FOUND;
         goto cleanup;
     }
-    *capacityPtr = (uint16_t)capacity;
+    *capacityPtr = (uint16_t)Capacity;
 
     // Get the battery voltage in mV (or -1 if not found)
     int32_t voltage = le_cfg_GetInt(iteratorRef, "voltage", -1);
@@ -866,9 +870,7 @@ le_result_t ma_battery_GetPercentRemaining
     uint16_t *percentage
 )
 {
-    int32_t capacity = le_cfg_QuickGetInt("batteryInfo/capacity", -1);
-
-    if (capacity < 0)
+    if (Capacity < 0)
     {
         LE_WARN("Battery capacity not configured");
         return LE_NOT_FOUND;
@@ -879,7 +881,7 @@ le_result_t ma_battery_GetPercentRemaining
         le_result_t r = ma_battery_GetChargeRemaining(&remaining);
         if (r == LE_OK)
         {
-            *percentage = (uint16_t)(100UL * remaining / capacity);
+            *percentage = (uint16_t)(100UL * remaining / Capacity);
         }
 
         return r;
@@ -950,7 +952,7 @@ static void InitMonitoringState(void)
     dhubIO_SetNumericDefault(RES_PATH_NOM_VOLTAGE, ((double)voltage) / 1000);
     dhubIO_SetNumericDefault(RES_PATH_CAPACITY, capacity);
 
-    Calibrate(capacity);
+    StartCalibration(capacity);
 }
 
 
@@ -1019,10 +1021,9 @@ static void batteryTimer
         dhubIO_PushString(RES_PATH_HEALTH, 0, GetHealthStr(healthStatus));
     }
 
-    int32_t capacity = le_cfg_QuickGetInt("batteryInfo/capacity", -1);
-    if (capacity < 0)
+    if (Capacity < 0)
     {
-        LE_WARN("Battery capacity configuration not found");
+        LE_WARN("Battery capacity not configured.");
         return;
     }
 
@@ -1031,11 +1032,11 @@ static void batteryTimer
     if (chargingStatus == MA_BATTERY_FULL)
     {
         // The battery is full, so the charge remaining must be the full capacity.
-        chargeRemaining = capacity;
+        chargeRemaining = Capacity;
 
         // Auto-calibrate the battery current monitor by telling it that the battery now has the
         // configured maximum charge.
-        UpdateChargeLevel(capacity);
+        UpdateChargeLevel(Capacity);
     }
     else
     {
@@ -1048,7 +1049,7 @@ static void batteryTimer
         }
     }
 
-    double percentage = 100 * ((double)chargeRemaining / (double)capacity);
+    double percentage = 100 * ((double)chargeRemaining / (double)Capacity);
 
     dhubIO_PushNumeric(RES_PATH_ENERGY, 0, (double)chargeRemaining);
     dhubIO_PushNumeric(RES_PATH_PERCENT, 0, percentage);
@@ -1088,7 +1089,8 @@ COMPONENT_INIT
     // Update period (s).
     LE_ASSERT(LE_OK == dhubIO_CreateOutput(RES_PATH_PERIOD, DHUBIO_DATA_TYPE_NUMERIC, "s"));
     dhubIO_AddNumericPushHandler(RES_PATH_PERIOD, SetPeriod, NULL);
-    dhubIO_SetNumericDefault(RES_PATH_PERIOD, BATTERY_SAMPLE_INTERVAL_IN_MILLISECONDS);
+    dhubIO_SetNumericDefault(RES_PATH_PERIOD,
+                             ((double)BATTERY_SAMPLE_INTERVAL_IN_MILLISECONDS) / 1000);
 
     // String describing the health of the battery.
     LE_ASSERT(LE_OK == dhubIO_CreateInput(RES_PATH_HEALTH, DHUBIO_DATA_TYPE_STRING, ""));
