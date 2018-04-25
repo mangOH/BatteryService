@@ -611,11 +611,11 @@ le_result_t ma_battery_GetVoltage
     int pathLen = snprintf(path, sizeof(path), MonitorStr, MANGOH_I2C_BUS_BATTERY, VoltageStr);
     LE_ASSERT(pathLen < sizeof(path));
 
-    int32_t mV;
-    le_result_t r = ReadIntFromFile(path, &mV);
+    int32_t uV;
+    le_result_t r = ReadIntFromFile(path, &uV);
     if (r == LE_OK)
     {
-        *volt = ((double)mV) / 1000.0;
+        *volt = ((double)uV) / 1000000.0;
     }
 
     return r;
@@ -892,7 +892,11 @@ static void batteryTimer
         ReportChargingStatusChange(chargingStatus);
         oldChargingStatus = chargingStatus;
 
-        dhubIO_PushBoolean(RES_PATH_CHARGING, 0, (chargingStatus == MA_BATTERY_CHARGING));
+        // Note: The battery monitor shows FULL only when on external power.
+        bool isCharging =    (chargingStatus == MA_BATTERY_CHARGING)
+                          || (chargingStatus == MA_BATTERY_FULL);
+
+        dhubIO_PushBoolean(RES_PATH_CHARGING, 0, isCharging);
     }
 
     ma_battery_HealthStatus_t healthStatus = ma_battery_GetHealthStatus();
