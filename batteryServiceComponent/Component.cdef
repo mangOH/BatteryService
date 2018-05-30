@@ -7,7 +7,6 @@ sources:
 cflags:
 {
     -std=c99
-    -DMANGOH_I2C_BUS_BATTERY=${MANGOH_I2C_BUS_BATTERY}
 }
 
 requires:
@@ -20,12 +19,12 @@ requires:
 
     file:
     {
-        /sys/bus/i2c/devices/${MANGOH_I2C_BUS_BATTERY}-006b/power_supply/bq24190-charger/health  /sys/bus/i2c/devices/${MANGOH_I2C_BUS_BATTERY}-006b/power_supply/bq24190-charger/health
-        /sys/bus/i2c/devices/${MANGOH_I2C_BUS_BATTERY}-006b/power_supply/bq24190-battery/status  /sys/bus/i2c/devices/${MANGOH_I2C_BUS_BATTERY}-006b/power_supply/bq24190-battery/status
-        /sys/bus/i2c/devices/${MANGOH_I2C_BUS_BATTERY}-0064/power_supply/LTC2942/voltage_now     /sys/bus/i2c/devices/${MANGOH_I2C_BUS_BATTERY}-0064/power_supply/LTC2942/voltage_now
-        /sys/bus/i2c/devices/${MANGOH_I2C_BUS_BATTERY}-0064/power_supply/LTC2942/temp            /sys/bus/i2c/devices/${MANGOH_I2C_BUS_BATTERY}-0064/power_supply/LTC2942/temp
-        /sys/bus/i2c/devices/${MANGOH_I2C_BUS_BATTERY}-0064/power_supply/LTC2942/charge_now      /sys/bus/i2c/devices/${MANGOH_I2C_BUS_BATTERY}-0064/power_supply/LTC2942/charge_now
-        /sys/bus/i2c/devices/${MANGOH_I2C_BUS_BATTERY}-0064/power_supply/LTC2942/charge_counter /sys/bus/i2c/devices/${MANGOH_I2C_BUS_BATTERY}-0064/power_supply/LTC2942/charge_counter
+        /sys/class/power_supply/bq24190-charger/health  /sys/class/power_supply/bq24190-charger/health
+        /sys/class/power_supply/bq24190-battery/status  /sys/class/power_supply/bq24190-battery/status
+        /sys/class/power_supply/LTC2942/voltage_now     /sys/class/power_supply/LTC2942/voltage_now
+        /sys/class/power_supply/LTC2942/temp            /sys/class/power_supply/LTC2942/temp
+        /sys/class/power_supply/LTC2942/charge_now      /sys/class/power_supply/LTC2942/charge_now
+        /sys/class/power_supply/LTC2942/charge_counter /sys/class/power_supply/LTC2942/charge_counter
     }
 }
 

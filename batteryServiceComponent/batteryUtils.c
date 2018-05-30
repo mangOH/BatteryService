@@ -1,7 +1,15 @@
+//--------------------------------------------------------------------------------------------------
+/**
+ * @file batteryUtils.c
+ *
+ * File access utilities used by the Battery Service.
+ */
+//--------------------------------------------------------------------------------------------------
+
 #include "legato.h"
 #include "batteryUtils.h"
 
-le_result_t ReadStringFromFile
+le_result_t util_ReadStringFromFile
 (
     const char *filePath,
     char *value,
@@ -56,14 +64,14 @@ done:
     return r;
 }
 
-le_result_t ReadIntFromFile
+le_result_t util_ReadIntFromFile
 (
     const char *filePath,
     int *value
 )
 {
     char buffer[16];
-    le_result_t r = ReadStringFromFile(filePath, buffer, sizeof(buffer));
+    le_result_t r = util_ReadStringFromFile(filePath, buffer, sizeof(buffer));
     if (r == LE_OK)
     {
         int charsScanned = 0;
@@ -88,14 +96,14 @@ le_result_t ReadIntFromFile
 }
 
 
-le_result_t ReadDoubleFromFile
+le_result_t util_ReadDoubleFromFile
 (
     const char *filePath,
     double *value
 )
 {
     char buffer[32];
-    le_result_t r = ReadStringFromFile(filePath, buffer, sizeof(buffer));
+    le_result_t r = util_ReadStringFromFile(filePath, buffer, sizeof(buffer));
     if (r == LE_OK)
     {
         int charsScanned = 0;
@@ -120,7 +128,7 @@ le_result_t ReadDoubleFromFile
 }
 
 
-le_result_t WriteIntToFile
+le_result_t util_WriteIntToFile
 (
     const char *filePath,
     int value

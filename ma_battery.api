@@ -76,13 +76,6 @@
  * LE_FATAL_IF(res != LE_OK, "ma_battery_GetEnergyRemaining() failed (%s)", LE_RESULT_TXT(res));
  * @endcode
  *
- * ma_battery_Present() reports whether there is a battery or not.
- * @code
- * bool present;
- * present = ma_battery_Present();
- * LE_INFO("Present or not %d", present);
- * @endcode
- *
  * Copyright (C) Sierra Wireless Inc.
  */
 //--------------------------------------------------------------------------------------------------
@@ -103,6 +96,7 @@ ENUM ChargingStatus
     CHARGEERROR,         ///< Error
 };
 
+
 //--------------------------------------------------------------------------------------------------
 /**
  * Health status of battery
@@ -117,7 +111,8 @@ ENUM HealthStatus
     COLD,            ///< Battery is cold and cannot charge. Check datasheet
     HOT,             ///< Battery is hot and cannot charge.  Check datasheet
     HEALTHUNDEFINED, ///< Battery health not defined
-    HEALTHERROR      ///< Error in getting health
+    HEALTHERROR,     ///< Error in getting health
+    DISCONNECTED,    ///< Battery is not connected.
 };
 
 
@@ -224,22 +219,12 @@ FUNCTION le_result_t GetChargeRemaining
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Provide battery presence info.
- *
- * @return true = present, false = not present.
- */
-//--------------------------------------------------------------------------------------------------
-FUNCTION bool Present();
-
-
-//--------------------------------------------------------------------------------------------------
-/**
  * Percentage charge level change event handler (callback).
  */
 //--------------------------------------------------------------------------------------------------
 HANDLER LevelPercentageHandler
 (
-	uint8 percentage IN,        ///< The current battery charge percentage.
+	uint8 percentage IN,        ///< The battery charge percentage.
 	uint8 percentageTrigger IN, ///< The percentage threshold that triggered this notification.
 	bool isHighLevel IN         ///< true = percentage is higher than trigger level, false = lower.
 );
