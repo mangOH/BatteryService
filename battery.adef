@@ -4,7 +4,7 @@ start: auto
 
 executables:
 {
-    batteryService = ( batteryServiceComponent )
+    battery = ( batteryComponent )
 }
 
 processes:
@@ -15,7 +15,7 @@ processes:
     }
     run:
     {
-        ( batteryService )
+        ( battery )
     }
     faultAction: stopApp
 }
@@ -29,11 +29,11 @@ requires:
 
 extern:
 {
-    batteryService.batteryServiceComponent.ma_battery
-    batteryService.batteryServiceComponent.ma_adminbattery
+    battery.batteryComponent.ma_battery
+    battery.batteryComponent.ma_adminbattery
 }
 
 bindings:
 {
-    batteryService.batteryServiceComponent.dhubIO -> dataHub.io
+    battery.batteryComponent.dhubIO -> dataHub.io
 }

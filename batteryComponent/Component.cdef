@@ -1,6 +1,6 @@
 sources:
 {
-    batteryService.c
+    battery.c
     batteryUtils.c
 }
 
