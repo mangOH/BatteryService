@@ -65,7 +65,6 @@ static le_ref_MapRef_t HealthStatusRegRefMap;
 /// Example JSON value
 #define JSON_EXAMPLE "{\"health\":\"good\",\"%EL\":100,\"mAh\":2200,\"charging\":true,"\
                       "\"mA\":2.838,\"V\":3.7,\"degC\":32.1}"
-
 /// Not a number
 #ifndef NAN
     #define NAN  (0.0 / 0.0)
@@ -186,7 +185,6 @@ static const char* GetHealthStr
 
     return "unknown";
 }
-
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -404,6 +402,22 @@ void ma_battery_RemoveHealthChangeHandler
     }
 }
 
+//--------------------------------------------------------------------------------------------------
+/**
+ * A handler for client disconnects which frees all resources associated with the client.
+ */
+//--------------------------------------------------------------------------------------------------
+/*static void ClientSessionClosedHandler
+(
+    le_msg_SessionRef_t clientSession,
+    void *context
+)
+{
+    RemoveAllLevelAlarmHandlersOwnedByClient(clientSession);
+    RemoveAllChargeAlarmHandlersOwnedByClient(clientSession);
+    RemoveAllHealthAlarmHandlersOwnedByClient(clientSession);
+}
+*/
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -449,7 +463,6 @@ static bool IsCharging
     // Note: The battery monitor shows FULL only when on external power.
     return ((status == MA_BATTERY_CHARGING) || (status == MA_BATTERY_FULL));
 }
-
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -540,6 +553,7 @@ static void PushToDataHub
     unsigned int mAh
 )
 //--------------------------------------------------------------------------------------------------
+
 {
     // Get the battery voltage.
     double voltage;
@@ -595,7 +609,6 @@ static void PushToDataHub
         dhubIO_PushJson(RES_PATH_VALUE, DHUBIO_NOW, value);
     }
 }
-
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -1101,6 +1114,7 @@ static void RunStateMachine
  * Set the battery technology.
  */
 //--------------------------------------------------------------------------------------------------
+
 static void SetTechnology
 (
     double timestamp,
@@ -1118,6 +1132,7 @@ static void SetTechnology
  * Set the capacity.
  */
 //--------------------------------------------------------------------------------------------------
+
 static void SetCapacity
 (
     double timestamp,
@@ -1150,6 +1165,7 @@ static void SetCapacity
  * Set the nominal voltage of the battery.
  */
 //--------------------------------------------------------------------------------------------------
+
 static void SetNominalVoltage
 (
     double timestamp,
@@ -1168,12 +1184,12 @@ static void SetNominalVoltage
     }
 }
 
-
 //--------------------------------------------------------------------------------------------------
 /**
  * Set the timer period.
  */
 //--------------------------------------------------------------------------------------------------
+
 static void SetPeriod
 (
     double timestamp,
@@ -1191,7 +1207,6 @@ static void SetPeriod
         le_timer_SetMsInterval(Timer, (uint32_t)(period * 1000));
     }
 }
-
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -1553,6 +1568,8 @@ static void BatteryTimerExpiryHandler
 
 COMPONENT_INIT
 {
+   // le_msg_AddServiceCloseHandler(ma_battery_GetServiceRef(), ClientSessionClosedHandler, NULL);
+
     // String describing the battery technology.
     LE_ASSERT(LE_OK == dhubIO_CreateOutput(RES_PATH_TECH, DHUBIO_DATA_TYPE_STRING, ""));
     dhubIO_AddStringPushHandler(RES_PATH_TECH, SetTechnology, NULL);
