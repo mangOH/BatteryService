@@ -4,7 +4,11 @@ start: auto
 
 executables:
 {
-    battery = ( batteryComponent )
+    #if ${MANGOH_BOARD} = red
+    battery = (  batteryComponentRed )
+    #elif ${MANGOH_BOARD} = yellow
+    battery = ( batteryComponentYellow )
+    #endif
 }
 
 processes:
@@ -29,11 +33,21 @@ requires:
 
 extern:
 {
-    battery.batteryComponent.ma_battery
-    battery.batteryComponent.ma_adminbattery
+    #if ${MANGOH_BOARD} = red
+    battery.batteryComponentRed.ma_battery
+    battery.batteryComponentRed.ma_adminbattery
+    #elif ${MANGOH_BOARD} = yellow
+    battery.batteryComponentYellow.ma_battery
+    battery.batteryComponentYellow.ma_adminbattery
+    #endif
 }
 
 bindings:
 {
-    battery.batteryComponent.dhubIO -> dataHub.io
+    
+    #if ${MANGOH_BOARD} = red
+    battery.batteryComponentRed.dhubIO -> dataHub.io
+    #elif ${MANGOH_BOARD} = yellow
+    battery.batteryComponentYellow.dhubIO -> dataHub.io
+    #endif
 }

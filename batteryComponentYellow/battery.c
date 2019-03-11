@@ -36,13 +36,16 @@
 #define DEFAULT_BATTERY_SAMPLE_INTERVAL_MS 10000
 #define STABILIZATION_TIME_MS 5000
 
-static const char HealthFilePath[]  = "/sys/class/power_supply/bq24190-charger/health";
-static const char StatusFilePath[]  = "/sys/class/power_supply/bq24190-battery/status";
-static const char MonitorDirPath[] = "/sys/class/power_supply/LTC2942";
+static const char HealthFilePath[]  = "/sys/class/power_supply/bq25601-battery/health";
+static const char StatusFilePath[]  = "/sys/class/power_supply/bq25601-battery/status";
+static const char MonitorDirPath[] = "/sys/class/power_supply/BQ27246";
 static const char VoltageFileName[] = "voltage_now";
 static const char TempFileName[]    = "temp";
 static const char ChargeNowFileName[] = "charge_now";
-static const char CounterFileName[]  = "charge_counter";
+static const char CurrentNowFileName[]  = "current_now";
+static const char PresentFileName[] = "present";
+static const char ChargeMaxFileName[] = "charge_full";
+//static const char TechnologyFileName[] = "technology";
 
 static le_mem_PoolRef_t LevelAlarmPool;
 static le_ref_MapRef_t LevelAlarmRefMap;
@@ -54,16 +57,14 @@ static le_mem_PoolRef_t HealthStatusRegPool;
 static le_ref_MapRef_t HealthStatusRegRefMap;
 
 // Output resources (configuration settings).
-#define RES_PATH_TECH        "tech"     ///< String name of the battery technology (e.g., "LiPo")
 #define RES_PATH_CAPACITY    "capacity" ///< Capacity of the battery in mAh
-#define RES_PATH_NOM_VOLTAGE "nominalVoltage"   ///< Nominal battery voltage in Volts
 #define RES_PATH_PERIOD      "period"   ///< Sampling period in seconds
 
 /// Input resource path
 #define RES_PATH_VALUE       "value"
 
 /// Example JSON value
-#define JSON_EXAMPLE "{\"health\":\"good\",\"%EL\":100,\"mAh\":2200,\"charging\":true,"\
+#define JSON_EXAMPLE "{\"health\":\"good\",\"BatteryPercentage\":100,\"mAh\":2200,\"charging\":true,"\
                       "\"mA\":2.838,\"V\":3.7,\"degC\":32.1}"
 /// Not a number
 #ifndef NAN
@@ -76,6 +77,7 @@ static le_timer_Ref_t Timer = NULL;
 /// The normal polling period in ms.
 static uint32_t PollingPeriod = DEFAULT_BATTERY_SAMPLE_INTERVAL_MS;
 
+
 /// Battery capacity (mAh), or -1 if not configured.
 static int32_t Capacity = -1;
 
@@ -86,7 +88,7 @@ static ma_battery_ChargingStatus_t ChargingStatus = MA_BATTERY_CHARGEUNDEFINED;
 static int32_t ChargeCounter = 0;
 
 /// The value read before the last read value of the Charge Counter.
-static int32_t OldChargeCounter = 0;
+static int32_t ChargeCounterFull = 0;
 
 /// The current flowing into or out of the battery (mA).
 static double CurrentFlow = 0;
@@ -463,6 +465,30 @@ static bool IsCharging
     // Note: The battery monitor shows FULL only when on external power.
     return ((status == MA_BATTERY_CHARGING) || (status == MA_BATTERY_FULL));
 }
+//--------------------------------------------------------------------------------------------------
+/**
+ * Set the battery capcity when battery is full and shows the capacity to which the battery is
+ * charged.
+ *
+ */
+//--------------------------------------------------------------------------------------------------
+void Battery_InitCapacity
+(
+    void
+)
+{
+    LE_DEBUG(" Create battery capcity");
+
+    // Create a write transaction so we can update the tree
+    le_cfg_IteratorRef_t iteratorRef = le_cfg_CreateWriteTxn("batteryInfo");
+
+
+    // Set the battery capacity as set by the manufacturer
+    le_cfg_SetInt(iteratorRef, "capacity", -1);
+
+    // Commit the transaction to make sure new settings are written to config tree
+    le_cfg_CommitTxn(iteratorRef);
+}
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -477,6 +503,7 @@ static unsigned int ComputePercentage
 )
 {
     // Compute the battery charge percentage, rounding up from half a percent or higher.
+    LE_INFO("Enterd mAh is %d",mAh);
     uint32_t percentTimesTen = 1000UL * mAh / Capacity;
     unsigned int percentage = (percentTimesTen / 10);
     if ((percentTimesTen % 10) >= 5)
@@ -499,45 +526,55 @@ static unsigned int ComputePercentage
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Save the percentage level.
+ * Save the capacity level.
  */
 //--------------------------------------------------------------------------------------------------
-static void SavePercentage
+static void SaveCapacity
 (
-    unsigned int percentage
+    unsigned int capacity
 )
 {
-    le_cfg_QuickSetInt("batteryInfo/percent", percentage);
+    // Notify the state machine if the capacity setting changed.
+    if (Capacity != capacity)
+    {
+        Capacity = capacity;
+        // Forget the old capacity level, if it's stored in the Config Tree.
+        le_cfg_QuickDeleteNode("batteryInfo/capacity");
+ 
+   le_cfg_QuickSetInt("batteryInfo/capacity", capacity);
+   LE_INFO("wrote capcity %d to config tree",capacity);
+   }
+   // Update this info in the Data Hub.
+ //  dhubIO_SetNumericDefault(RES_PATH_CAPACITY, capacity);
+
 }
 
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Delete the saved percentage level.
- */
-//--------------------------------------------------------------------------------------------------
-static void DeletePercentage
-(
-    void
-)
-{
-    le_cfg_QuickDeleteNode("batteryInfo/percent");
-}
-
-
-//--------------------------------------------------------------------------------------------------
-/**
- * Load the saved percentage level.
+ * Load the saved Capacity.
  *
- * @return The percentage, or -1 if not found.
+ * @return save Capacity, or -1 if not found.
  */
 //--------------------------------------------------------------------------------------------------
-static int LoadPercentage
+static int LoadCapacity
 (
     void
 )
 {
-    return le_cfg_QuickGetInt("batteryInfo/percent", -1);
+    return le_cfg_QuickGetInt("batteryInfo/capacity", -1);
+}
+//--------------------------------------------------------------------------------------------------
+/**
+ * Delete the saved capacity
+ */
+//--------------------------------------------------------------------------------------------------
+static void DeleteCapacity
+(
+    void
+)
+{
+    le_cfg_QuickDeleteNode("batteryInfo/capacity");
 }
 
 
@@ -586,7 +623,7 @@ static void PushToDataHub
     int len = snprintf(value,
                        sizeof(value),
                        "{\"health\":\"%s\","
-                       "\"%%EL\":%u,"
+                       "\"BatteryPercentage\":%u,"
                        "\"mAh\":%u,"
                        "\"charging\":%s,"
                        "\"mA\": %.3lf,"
@@ -630,26 +667,10 @@ static void ReportAll
             LE_FATAL("Failed to read battery charge level (%s).", LE_RESULT_TXT(r));
         }
     }
-
+    LE_INFO("Report all entry point");
     unsigned int percentage = ComputePercentage(mAh);
 
-    // In the NOMINAL state, whenever the percentage changes, save it in the Config Tree
-    // so we don't have to re-calibrate whenever there's a reboot.
-    static int oldPercentage = -1;
-    if (State == STATE_NOMINAL)
-    {
-        if (percentage != oldPercentage)
-        {
-            SavePercentage(percentage);
-
-            oldPercentage = percentage;
-        }
-    }
-    else
-    {
-        oldPercentage = -1;
-    }
-
+   
     // Get the health status.
     ma_battery_HealthStatus_t healthStatus = ma_battery_GetHealthStatus();
 
@@ -659,40 +680,92 @@ static void ReportAll
     PushToDataHub(healthStatus, percentage, mAh);
 }
 
-
 //--------------------------------------------------------------------------------------------------
 /**
- * Write the present charge level to the battery monitoring driver.
+ * Detect the battery presence using the bin pin on the BQ27426
  *
- * This is only done to correct the monitoring driver's idea of how much charge is presently stored
- * in the battery.  Normally the driver updates this itself as the battery drains and charges.
  */
 //--------------------------------------------------------------------------------------------------
-static void UpdateChargeLevel
+static int  BatteryPresent
 (
-    int mAh
+    void
 )
 {
-    LE_DEBUG("Charge level = %d mAh.", mAh);
+    char path[PATH_MAX];
+    int present;
 
-    if (mAh > 0)
+    int pathLen = snprintf(path, sizeof(path), "%s/%s", MonitorDirPath, PresentFileName);
+    LE_ASSERT(pathLen < sizeof(path));
+
+    le_result_t result = util_ReadIntFromFile(path, &present);
+
+    if (result != LE_OK)
     {
-        int uAh = mAh * 1000;
-
-        LE_DEBUG("battery %d", uAh);
-
-        char path[256];
-        int len = snprintf(path, sizeof(path), "%s/%s", MonitorDirPath, ChargeNowFileName);
-        LE_ASSERT(len < sizeof(path));
-        util_WriteIntToFile(path, uAh);
+        LE_FATAL("Failed to read file '%s' (%s).", path, LE_RESULT_TXT(result));
     }
-    else
+
+    LE_DEBUG("Battery presence= %d.", present);
+    return present;
+
+}
+//--------------------------------------------------------------------------------------------------
+/**
+ * Detect the current now consumption for  system
+ *
+ */
+//--------------------------------------------------------------------------------------------------
+static int  CurrentNow
+(
+    void
+)
+{
+    char path[PATH_MAX];
+    int uACurrentNow, mACurrentNow;
+
+    int pathLen = snprintf(path, sizeof(path), "%s/%s", MonitorDirPath, CurrentNowFileName);
+    LE_ASSERT(pathLen < sizeof(path));
+
+    le_result_t result = util_ReadIntFromFile(path, &uACurrentNow);
+
+    if (result != LE_OK)
     {
-        LE_ERROR("Charge level invalid. (%d mAh)", mAh);
+        LE_FATAL("Failed to read file '%s' (%s).", path, LE_RESULT_TXT(result));
     }
+    mACurrentNow = uACurrentNow / 1000;
+    LE_DEBUG("Battery current now= %d.", mACurrentNow);
+    return mACurrentNow;
+
+}
+//--------------------------------------------------------------------------------------------------
+/**
+ * Detect the battery technology connected to board 
+ *
+ */
+//--------------------------------------------------------------------------------------------------
+/*static char  BatteryTechnology
+(
+    void
+)
+{
+    char path[PATH_MAX];
+    int technology;
+
+    int pathLen = snprintf(path, sizeof(path), "%s/%s", MonitorDirPath, TechnologyFileName);
+    LE_ASSERT(pathLen < sizeof(path));
+
+    le_result_t result = util_ReadStringFromFile(path, &technology);
+
+    if (result != LE_OK)
+    {
+        LE_FATAL("Failed to read file '%s' (%s).", path, LE_RESULT_TXT(result));
+    }
+
+    LE_DEBUG("Battery presence= %x\n", technology);
+    return technology;
+
 }
 
-
+*/
 //--------------------------------------------------------------------------------------------------
 /**
  * Reads the battery charging status and updates the ChargingStatus variable.
@@ -713,14 +786,19 @@ static void ReadChargingStatus
         if (strcmp(chargingStatus, "Discharging") == 0)
         {
             ChargingStatus = MA_BATTERY_DISCHARGING;
+            LE_INFO("Battery status is dischargin");
+
         }
         else if (strcmp(chargingStatus, "Charging") == 0)
         {
             ChargingStatus = MA_BATTERY_CHARGING;
+            LE_INFO("Battery status is charging");
+
         }
         else if (strcmp(chargingStatus, "Full") == 0)
         {
             ChargingStatus = MA_BATTERY_FULL;
+            LE_INFO("Battery status is full");
         }
         else
         {
@@ -744,31 +822,59 @@ static void ReadChargingStatus
  * ChargeCounter and OldChargeCounter variables.
  */
 //--------------------------------------------------------------------------------------------------
-static void ReadChargeCounter
+static int ReadChargeCounter
 (
     void
 )
 {
     char path[PATH_MAX];
 
-    int pathLen = snprintf(path, sizeof(path), "%s/%s", MonitorDirPath, CounterFileName);
+    int pathLen = snprintf(path, sizeof(path), "%s/%s", MonitorDirPath, ChargeNowFileName);
     LE_ASSERT(pathLen < sizeof(path));
 
-    int32_t counter;
-    le_result_t result = util_ReadIntFromFile(path, &counter);
+    int32_t uAhCounter, mAhCounter;
+    le_result_t result = util_ReadIntFromFile(path, &uAhCounter);
 
     if (result != LE_OK)
     {
         LE_FATAL("Failed to read file '%s' (%s).", path, LE_RESULT_TXT(result));
     }
+    mAhCounter = uAhCounter / 1000;
+    LE_INFO("Charge counter = %d.", mAhCounter);
 
-    LE_DEBUG("Charge counter = %d.", counter);
-
-    OldChargeCounter = ChargeCounter;
-    ChargeCounter = counter;
+//    OldChargeCounter = ChargeCounter;
+    return mAhCounter;
 }
+//--------------------------------------------------------------------------------------------------
+/**
+ * Read the value of the battery current monitor's charge counter and update the
+ * ChargeCounter and OldChargeCounter variables.
+ */
+//--------------------------------------------------------------------------------------------------
+static int ReadChargeCounterFull
+(
+    void
+)
+{
+    char path[PATH_MAX];
 
+    int pathLen = snprintf(path, sizeof(path), "%s/%s", MonitorDirPath, ChargeMaxFileName);
+    LE_ASSERT(pathLen < sizeof(path));
 
+    int32_t uAhCounter, mAhCounter;
+    le_result_t result = util_ReadIntFromFile(path, &uAhCounter);
+
+    if (result != LE_OK)
+    {
+        LE_FATAL("Failed to read file '%s' (%s).", path, LE_RESULT_TXT(result));
+    }
+    mAhCounter = uAhCounter / 1000;
+
+    LE_DEBUG("Charge counter = %d.", mAhCounter);
+
+//    OldChargeCounter = ChargeCounter;
+    return mAhCounter;
+}
 //--------------------------------------------------------------------------------------------------
 /**
  * Start the stabilization period.  After configuration is changed, we have to wait a few seconds
@@ -807,11 +913,13 @@ static void StartCalibration
     // If the battery is full,
     if (ChargingStatus == MA_BATTERY_FULL)
     {
-        LE_DEBUG("Battery is full");
+        LE_INFO("Battery is full");
 
         // Tell the battery monitoring driver that battery's present charge level is
         // equal to the maximum configured capacity.
-        UpdateChargeLevel(Capacity);
+        ChargeCounter =  ReadChargeCounter();
+        SaveCapacity(ChargeCounter);       
+        Capacity = ChargeCounter;
 
         State = STATE_NOMINAL;
     }
@@ -823,9 +931,9 @@ static void StartCalibration
         // maximum capacity.  When the battery charger later signals a "full" condition,
         // we'll update this again.  Otherwise, we let the battery monitoring driver update
         // it as the battery charges and drains.
-        LE_WARN("Battery level unknown. Assuming 50%% for now. Please fully charge to calibrate.");
-
-        UpdateChargeLevel(Capacity / 2);
+        LE_INFO("Battery level unknown.Please fully charge to calibrate.");
+        ChargeCounterFull = ReadChargeCounterFull();
+        Capacity = ChargeCounterFull;
 
         State = STATE_CALIBRATING;  // Battery is known to exist but charge level is unknown.
     }
@@ -912,25 +1020,27 @@ static void DetectingPresenceState
     Event_t event
 )
 {
+    int  present;
+
     switch (event)
     {
         case EVENT_TIMER_EXPIRED:
         {
-            // If the charge counter has changed, then we know there's a battery connected.
-            if (ChargeCounter != OldChargeCounter)
+            present = BatteryPresent();
+            if (present )
             {
                 // Start battery level calibration.
                 State = STATE_CALIBRATING;
                 StartCalibration();
             }
-            // If the charge counter has not changed, and we've seen "Charging" (instead of "Full"),
-            // then we know that a battery is NOT connected.
-            else if (ChargingStatus == MA_BATTERY_CHARGING)
-            {
+ 
+           else
+           {
+           	LE_INFO("Failed to detect battery");
                 State = STATE_DISCONNECTED;
-            }
-
-            break;
+           }
+           
+           break;
         }
 
         case EVENT_CAPACITY_CHANGED:
@@ -952,19 +1062,26 @@ static void DisconnectedState
     Event_t event
 )
 {
+    int present;
+
     switch (event)
     {
         case EVENT_TIMER_EXPIRED:
         {
-            // If the charge counter has changed, then we know there's a battery connected.
-            if (ChargeCounter != OldChargeCounter)
+            present = BatteryPresent();
+            if (present)
             {
                 // Start battery level calibration.
                 State = STATE_CALIBRATING;
                 StartCalibration();
             }
-
-            break;
+ 
+           else 
+           {
+           	LE_INFO("Failed to detect battery");
+           }
+           
+           break;
         }
 
         case EVENT_CAPACITY_CHANGED:
@@ -986,26 +1103,24 @@ static void CalibratingState
     Event_t event
 )
 {
+   int present;
+
     switch (event)
     {
         case EVENT_TIMER_EXPIRED:
         {
-            // If the charging status is "Full", we're done calibrating.  We know the level is
-            // 100%.  Update the battery monitor and switch to the NOMINAL state.
-            if (ChargingStatus == MA_BATTERY_FULL)
-            {
-                UpdateChargeLevel(Capacity);
+           present = BatteryPresent();
 
+            if ( present  && ChargingStatus == MA_BATTERY_FULL)
+            {
                 State = STATE_NOMINAL;
+                LE_INFO("In calibrating state");
             }
-            // Otherwise, if the charge counter has not changed, but the hardware still thinks
-            // it's charging, then the battery must have been disconnected.
-            else if ((ChargeCounter == OldChargeCounter) && (ChargingStatus == MA_BATTERY_CHARGING))
-            {
-                State = STATE_DISCONNECTED;
 
-                // Forget the old percent level, if it's stored in the Config Tree.
-                DeletePercentage();
+            else if ( !present )
+            {
+	        State = STATE_DISCONNECTED;
+                DeleteCapacity();
             }
 
             break;
@@ -1030,27 +1145,28 @@ static void NominalState
     Event_t event
 )
 {
+
+    int present;
+
     switch (event)
     {
         case EVENT_TIMER_EXPIRED:
         {
-            // If the charge counter has not changed, but the hardware still thinks
-            // it's charging, then the battery must have been disconnected.
-            if ((ChargeCounter == OldChargeCounter) && (ChargingStatus == MA_BATTERY_CHARGING))
-            {
-                State = STATE_DISCONNECTED;
+           present = BatteryPresent();
 
-                // Forget the old percent level, if it's stored in the Config Tree.
-                DeletePercentage();
-            }
-            // Else, if the charger is reporting that the battery is full,
-            // re-calibrate the charge monitor to 100%.
-            else if (ChargingStatus == MA_BATTERY_FULL)
+            if ( present && ChargingStatus == MA_BATTERY_FULL)
             {
-                UpdateChargeLevel(Capacity);
+                SaveCapacity(Capacity);    
+            }
+
+            else if ( !present )
+            {
+	        State = STATE_DISCONNECTED;
+                DeleteCapacity();
             }
 
             break;
+
         }
 
         case EVENT_CAPACITY_CHANGED:
@@ -1107,83 +1223,6 @@ static void RunStateMachine
 
     ReportAll();
 }
-
-
-//--------------------------------------------------------------------------------------------------
-/**
- * Set the battery technology.
- */
-//--------------------------------------------------------------------------------------------------
-
-static void SetTechnology
-(
-    double timestamp,
-    const char* tech,
-    void* contextPtr ///< unused
-)
-//--------------------------------------------------------------------------------------------------
-{
-    le_cfg_QuickSetString("batteryInfo/type", tech);
-}
-
-
-//--------------------------------------------------------------------------------------------------
-/**
- * Set the capacity.
- */
-//--------------------------------------------------------------------------------------------------
-
-static void SetCapacity
-(
-    double timestamp,
-    double capacity,  ///< mAh
-    void* contextPtr ///< unused
-)
-//--------------------------------------------------------------------------------------------------
-{
-    if (capacity < 0)
-    {
-        LE_ERROR("Capacity of %lf mAh is out of range.", capacity);
-    }
-    else if ((uint32_t)capacity != Capacity)
-    {
-        Capacity = capacity;
-
-        le_cfg_QuickSetInt("batteryInfo/capacity", (int32_t)capacity);
-
-        // Forget the old percent level, if it's stored in the Config Tree.
-        DeletePercentage();
-
-        // Notify the state machine that the capacity setting changed.
-        RunStateMachine(EVENT_CAPACITY_CHANGED);
-    }
-}
-
-
-//--------------------------------------------------------------------------------------------------
-/**
- * Set the nominal voltage of the battery.
- */
-//--------------------------------------------------------------------------------------------------
-
-static void SetNominalVoltage
-(
-    double timestamp,
-    double voltage,  ///< V
-    void* contextPtr ///< unused
-)
-//--------------------------------------------------------------------------------------------------
-{
-    if (voltage < 0)
-    {
-        LE_ERROR("Voltage of %lf V is out of range.", voltage);
-    }
-    else
-    {
-        le_cfg_QuickSetInt("batteryInfo/voltage", (uint32_t)(voltage * 1000)); // stored as mV
-    }
-}
-
 //--------------------------------------------------------------------------------------------------
 /**
  * Set the timer period.
@@ -1208,13 +1247,6 @@ static void SetPeriod
     }
 }
 
-//--------------------------------------------------------------------------------------------------
-/**
- * Set the battery technology as set by the battery manufacturer
- *
- * @note this function sets the battery parameters and although is optional but is good to have
- */
-//--------------------------------------------------------------------------------------------------
 void ma_adminbattery_SetTechnology
 (
     const char *batteryType,
@@ -1222,41 +1254,8 @@ void ma_adminbattery_SetTechnology
     uint32_t milliVolts
 )
 {
-    LE_DEBUG(" Create battery configuration");
-
-    // Create a write transaction so we can update the tree
-    le_cfg_IteratorRef_t iteratorRef = le_cfg_CreateWriteTxn("batteryInfo");
-
-    // Set the battery technology.
-    le_cfg_SetString(iteratorRef, "type", batteryType);
-
-    // Set the battery capacity as set by the manufacturer
-    le_cfg_SetInt(iteratorRef, "capacity", mAh);
-
-    // Set the voltage rating as set by the manufacturer in milliVolts
-    le_cfg_SetInt(iteratorRef, "voltage", milliVolts);
-
-    // Commit the transaction to make sure new settings are written to config tree
-    le_cfg_CommitTxn(iteratorRef);
-
-    // Update this info in the Data Hub.
-    dhubIO_SetStringDefault(RES_PATH_TECH, batteryType);
-    dhubIO_SetNumericDefault(RES_PATH_NOM_VOLTAGE, ((double)milliVolts) / 1000.0);
-    dhubIO_SetNumericDefault(RES_PATH_CAPACITY, mAh);
-
-    // Notify the state machine if the capacity setting changed.
-    if (Capacity != mAh)
-    {
-        Capacity = mAh;
-
-        // Forget the old percent level, if it's stored in the Config Tree.
-        DeletePercentage();
-
-        RunStateMachine(EVENT_CAPACITY_CHANGED);
-    }
+   LE_INFO("Cannot set technology for this device");
 }
-
-
 //--------------------------------------------------------------------------------------------------
 /**
  * Get the battery technology as set by the battery manufacturer
@@ -1270,51 +1269,9 @@ le_result_t ma_battery_GetTechnology
     uint16_t *voltagePtr
 )
 {
-    // Create a read transaction
-    le_cfg_IteratorRef_t iteratorRef = le_cfg_CreateReadTxn("batteryInfo");
-
-    // Get the name for the battery type
-    le_result_t result = le_cfg_GetString(iteratorRef, "type", batteryType, batteryTypeSize, "");
-    if (result != LE_OK)
-    {
-        LE_ERROR("Cannot get battery type (%s)", LE_RESULT_TXT(result));
-        if (batteryTypeSize > 0)
-        {
-            batteryType[0] = '\0';
-        }
-    }
-    if ((batteryTypeSize > 0) && (batteryType[0] == '\0'))
-    {
-        LE_WARN("Battery type not configured.");
-    }
-
-    // Get the battery voltage in mV (or -1 if not found)
-    int32_t voltage = le_cfg_GetInt(iteratorRef, "voltage", -1);
-    if (voltage < 0)
-    {
-        LE_WARN("Battery nominal voltage not configured.");
-        voltage = 0;
-    }
-    *voltagePtr = (uint16_t)voltage;
-
-    // Get the battery capacity in mAh (or -1 if not found)
-    // NOTE: This is the only one that really matters.  Everything else is informational.
-    int capacity = le_cfg_GetInt(iteratorRef, "capacity", -1);
-    if (capacity < 0)
-    {
-        LE_ERROR("Battery capacity not configured.  Battery Service cannot function without it.");
-        LE_ERROR("Please configure battery capacity via Battery API or Data Hub.");
-        result = LE_NOT_FOUND;
-    }
-    else
-    {
-        *capacityPtr = (uint16_t)capacity;
-        result = LE_OK;
-    }
-
-    le_cfg_CancelTxn(iteratorRef);
-
-    return result;
+    LE_INFO("Cannot access GetTechnology through for this device");
+    le_result_t r =LE_OK;
+    return r;   
 }
 
 
@@ -1433,6 +1390,34 @@ le_result_t ma_battery_GetVoltage
     return r;
 }
 
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get current now (in ma)
+ *
+ * @return
+ *      - LE_OK on success.
+ */
+//--------------------------------------------------------------------------------------------------
+le_result_t ma_battery_GetCurrentNow
+(
+    double *current
+)
+{
+    char path[256];
+
+    int pathLen = snprintf(path, sizeof(path), "%s/%s", MonitorDirPath, CurrentNowFileName);
+    LE_ASSERT(pathLen < sizeof(path));
+
+    int32_t uA;
+    le_result_t r = util_ReadIntFromFile(path, &uA);
+    if (r == LE_OK)
+    {
+        *current = ((double)uA) / 1000.0;
+    }
+
+    return r;
+}
+
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -1456,7 +1441,7 @@ le_result_t ma_battery_GetTemp
     le_result_t r = util_ReadIntFromFile(path, &tempcalc);
     if (r == LE_OK)
     {
-        *temp = ((double)tempcalc) / 100.0;
+        *temp = ((double)tempcalc) / 10.0;
     }
 
     return r;
@@ -1481,6 +1466,7 @@ le_result_t ma_battery_GetChargeRemaining
 
     int pathLen = snprintf(path, sizeof(path), "%s/%s", MonitorDirPath, ChargeNowFileName);
     LE_ASSERT(pathLen < sizeof(path));
+   
 
     int32_t uAh;
     le_result_t r = util_ReadIntFromFile(path, &uAh);
@@ -1489,7 +1475,7 @@ le_result_t ma_battery_GetChargeRemaining
         *charge = uAh / 1000;
     }
 
-    LE_DEBUG("Charge level = %uh mAh.", *charge);
+    LE_INFO("Charge level = %uh mAh.", *charge);
 
     return r;
 }
@@ -1527,6 +1513,7 @@ le_result_t ma_battery_GetPercentRemaining
         le_result_t r = ma_battery_GetChargeRemaining(&remaining);
         if (r == LE_OK)
         {
+            LE_INFO("Remaining charge is %d", remaining);       
             *percentage = ComputePercentage(remaining);
         }
 
@@ -1547,17 +1534,7 @@ static void BatteryTimerExpiryHandler
     le_timer_Ref_t batteryTimerRef  ///< not used (MAY BE NULL)
 )
 {
-    // Update the charge flow counter.
-    // Note: The charge counters must only be updated on a timer tick so that we can accurately
-    //       derive the current flow over time.
-    ReadChargeCounter();
-
-    // Compute the current flow.
-    // ChargeCounter counts uAh. Counting upward = charging, downward = draining.
-    #define MS_PER_HOUR (1000 * 60 * 60)
-    double mAh = (double)(ChargeCounter - OldChargeCounter) / 1000;
-    double h = (double)le_timer_GetMsInterval(batteryTimerRef) / MS_PER_HOUR;
-    CurrentFlow = ( mAh / h );
+    CurrentFlow = CurrentNow();
 
     // Update the charging status.
     ReadChargingStatus();
@@ -1569,21 +1546,6 @@ static void BatteryTimerExpiryHandler
 COMPONENT_INIT
 {
    // le_msg_AddServiceCloseHandler(ma_battery_GetServiceRef(), ClientSessionClosedHandler, NULL);
-
-    // String describing the battery technology.
-    LE_ASSERT(LE_OK == dhubIO_CreateOutput(RES_PATH_TECH, DHUBIO_DATA_TYPE_STRING, ""));
-    dhubIO_AddStringPushHandler(RES_PATH_TECH, SetTechnology, NULL);
-    dhubIO_MarkOptional(RES_PATH_TECH);
-
-    // Nominal voltage of the battery when charged.
-    LE_ASSERT(LE_OK == dhubIO_CreateOutput(RES_PATH_NOM_VOLTAGE, DHUBIO_DATA_TYPE_NUMERIC, "V"));
-    dhubIO_AddNumericPushHandler(RES_PATH_NOM_VOLTAGE, SetNominalVoltage, NULL);
-    dhubIO_MarkOptional(RES_PATH_NOM_VOLTAGE);
-
-    // Amount of charge the battery can store (mAh).
-    LE_ASSERT(LE_OK == dhubIO_CreateOutput(RES_PATH_CAPACITY, DHUBIO_DATA_TYPE_NUMERIC, "mAh"));
-    dhubIO_AddNumericPushHandler(RES_PATH_CAPACITY, SetCapacity, NULL);
-
     // Sample period (seconds).
     LE_ASSERT(LE_OK == dhubIO_CreateOutput(RES_PATH_PERIOD, DHUBIO_DATA_TYPE_NUMERIC, "s"));
     dhubIO_AddNumericPushHandler(RES_PATH_PERIOD, SetPeriod, NULL);
@@ -1609,56 +1571,50 @@ COMPONENT_INIT
     le_timer_SetHandler(Timer, BatteryTimerExpiryHandler);
 
     // Read the battery technology configuration settings from the Config Tree.
-    char type[MA_BATTERY_MAX_BATT_TYPE_STR_LEN + 1];
-    uint16_t mAh; // mAh
-    uint16_t mV; // mV
-    le_result_t result = ma_battery_GetTechnology(type, sizeof(type), &mAh, &mV);
-    if (result != LE_OK)
-    {
-        LE_ERROR("Battery monitor is not configured.");
+    //char type[MA_BATTERY_MAX_BATT_TYPE_STR_LEN + 1];
+   
+    int r, c;
+    Battery_InitCapacity();
+    r = BatteryPresent();
+    
+     if ( !r )
+     {
+        LE_ERROR("Battery monitor is not configured: battery not detected");
 
         // Remain in the UNCONFIGURED state without the timer running.
-    }
-    else
-    {
-        Capacity = mAh;
-
-        // Read the charge counter and remember the value to be compared against later.
-        ReadChargeCounter();
-        OldChargeCounter = ChargeCounter;   // To prevent wild mA measurements on subsequent reads.
-
-        // Set the default values of the configuration settings resources in the Data Hub.
-        if (type[0] != '\0')
-        {
-            dhubIO_SetStringDefault(RES_PATH_TECH, type);
-        }
-        if (mV > 0)
-        {
-            dhubIO_SetNumericDefault(RES_PATH_NOM_VOLTAGE, ((double)mV) / 1000);
-        }
-        dhubIO_SetNumericDefault(RES_PATH_CAPACITY, Capacity);
-
-        // Read the charge level percentage from the config tree.
-        int percent = LoadPercentage();
-        if (percent >= 0)
-        {
-            // Tell the battery monitor what level we think the battery is at.
-            UpdateChargeLevel(Capacity * percent / 100);
-
+     }
+     else
+     {  
+	
+        c = LoadCapacity();
+        if ( c >= 0 )
+        { 
+	    Capacity = c;
+            LE_INFO("Capacity in config tree is %d", c);            
             // Enter the NOMINAL state.
             State = STATE_NOMINAL;
         }
         else
         {
-            // The charge level percentage wasn't saved, so it must not have been calibrated,
+            // The capacity wasn't saved, so it must not have been calibrated,
             // and we don't even know if we have a battery connected, so go into the
             // DETECTING_PRESENCE state.
             State = STATE_DETECTING_PRESENCE;
+            LE_INFO(" In detecting presence state");
         }
 
         // Start the update timer.
         le_timer_Start(Timer);
+    LE_INFO("---------------------- Battery Service started");
+
     }
 
-    LE_INFO("---------------------- Battery Service started");
 }
+
+
+
+
+
+
+
+
