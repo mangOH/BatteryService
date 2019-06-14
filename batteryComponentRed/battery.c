@@ -1431,24 +1431,22 @@ le_result_t ma_battery_GetVoltage
     return r;
 }
 
+
 //--------------------------------------------------------------------------------------------------
 /**
- * Get current now (in ma)
+ * Get battery current (in mA)
  *
  * @return
  *      - LE_OK on success.
  */
 //--------------------------------------------------------------------------------------------------
-le_result_t ma_battery_GetCurrentNow
+le_result_t ma_battery_GetCurrent
 (
-    double *current
+    double *current ///< Battery current in mA, if LE_OK is returned.
 )
 {
-    le_result_t r = LE_OK;
-
-    return r;
+    return LE_NOT_IMPLEMENTED;
 }
-
 
 
 //--------------------------------------------------------------------------------------------------
