@@ -3,6 +3,7 @@
  * @page c_battery mangOH Battery  API
  *
  * @ref ma_battery_interface.h "API Reference" <br>
+ *
  * @subpage howToBattery "How To Setup Battery" <br>
  *
  * <HR>
@@ -13,29 +14,6 @@
  * notification of battery status changes.
  *
  * @section battery_usage Usage
- *
- * ma_battery_GetTechnology() provides information on the type of battery installed.
- * @code
- *   char batteryType[MA_BATTERY_MAX_TYPE_STR_BYTES];
- *   uint16_t mAh;
- *   uint16_t mV; // millivolts
- *
- *   le_result_t result = ma_battery_GetTechnology(batteryType,
- *                                                 sizeof(batteryType),
- *                                                 &mAh,
- *                                                 &mV);
- *   if (result == LE_OK)
- *   {
- *       LE_INFO("Battery type = %s, capacity = %hd mAh, voltage = %hd mV",
- *               batteryType,
- *               mAh,
- *               voltage);
- *   }
- *   else
- *   {
- *       LE_ERROR("Unable to get battery technology info (%s)", LE_RESULT_TXT(result));
- *   }
- * @endcode
  *
  * ma_battery_GetHealthStatus() provides information on health of the battery
  * @code
@@ -75,6 +53,18 @@
  * le_result_t res = ma_battery_GetChargeRemaining(&mAh);
  * LE_FATAL_IF(res != LE_OK, "ma_battery_GetEnergyRemaining() failed (%s)", LE_RESULT_TXT(res));
  * @endcode
+ *
+ * ma_battery_AddLevelPercentageHandler() can be used to register for notification callbacks
+ * when the battery level goes above or below specified thresholds.
+ * ma_battery_RemoveLevelPercentageHandler() can be used to cancel one of these registrations.
+ *
+ * ma_battery_AddHealthChangeHandler() can be used to register for notification callbacks when
+ * the health status of the battery changes.  ma_battery_RemoveHealthChangeHandler() can be used
+ * to cancel one of these registrations.
+ *
+ * ma_battery_AddChargingStatusChangeHandler() can be used to register for notification callbacks
+ * when the battery charging status changes.  ma_battery_RemoveChargingStatusChangeHandler() can
+ * be used to cancel one of these registrations.
  *
  * Copyright (C) Sierra Wireless Inc.
  */
@@ -125,24 +115,6 @@ DEFINE MAX_BATT_TYPE_STR_LEN = 128;
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Allows reading of the battery settings.
- *
- * We only support Li-Po or Li-Ion battery for now. Specify the current rating and number of cells.
- * All values were specificed by the configure command
- *
- * @return
- *   - LE_OK on success.
- */
-//--------------------------------------------------------------------------------------------------
-FUNCTION le_result_t GetTechnology
-(
-    string type[MAX_BATT_TYPE_STR_LEN]  OUT,  ///< Battery type
-    uint16 mAh             OUT,    ///< Specified capacity of battery in mAh
-    uint16 voltage         OUT     ///< Specified voltage of battery in mV
-);
-
-//--------------------------------------------------------------------------------------------------
-/**
  * Provides battery charging status
  *
  * @return Charging status code.
@@ -173,25 +145,23 @@ FUNCTION HealthStatus GetHealthStatus
 //--------------------------------------------------------------------------------------------------
 FUNCTION le_result_t GetVoltage
 (
-    double      voltage OUT    ///< V
+    double      voltage OUT    ///< The battery voltage, in V, if LE_OK is returned.
 );
 
 //--------------------------------------------------------------------------------------------------
-//--------------------------------------------------------------------------------------------------
 /**
- * Get battery current now (in mA)
+ * Get battery current (in mA)
  *
  * @return
  *     - LE_OK on success.
  */
 //--------------------------------------------------------------------------------------------------
-FUNCTION le_result_t GetCurrentNow
+FUNCTION le_result_t GetCurrent
 (
-    double      currentnow OUT    ///< mA
+    double      current OUT    ///< The battery current, in mA, if LE_OK is returned.
 );
 
 //--------------------------------------------------------------------------------------------------
-
 /**
  * Get battery temperature in degrees Celcius
  *
@@ -201,7 +171,7 @@ FUNCTION le_result_t GetCurrentNow
 //--------------------------------------------------------------------------------------------------
 FUNCTION le_result_t GetTemp
 (
-    double       temp   OUT   ///< Temperature in degrees Celcius
+    double       temp   OUT   ///< Temperature in degrees Celcius, if LE_OK is returned.
 );
 
 //--------------------------------------------------------------------------------------------------
@@ -214,7 +184,7 @@ FUNCTION le_result_t GetTemp
 //--------------------------------------------------------------------------------------------------
 FUNCTION le_result_t GetPercentRemaining
 (
-    uint16     percent   OUT  ///< Percentage battery remaining
+    uint16     percent   OUT  ///< Percentage battery remaining, if LE_OK is returned.
 );
 
 //--------------------------------------------------------------------------------------------------
@@ -227,7 +197,7 @@ FUNCTION le_result_t GetPercentRemaining
 //--------------------------------------------------------------------------------------------------
 FUNCTION le_result_t GetChargeRemaining
 (
-    uint16 charge       OUT  ///< Charge in mAh remaining
+    uint16 charge       OUT  ///< Charge in mAh remaining, if LE_OK is returned.
 );
 
 
@@ -238,24 +208,22 @@ FUNCTION le_result_t GetChargeRemaining
 //--------------------------------------------------------------------------------------------------
 HANDLER LevelPercentageHandler
 (
-	uint8 percentage IN,        ///< The battery charge percentage.
-	uint8 percentageTrigger IN, ///< The percentage threshold that triggered this notification.
-	bool isHighLevel IN         ///< true = percentage is higher than trigger level, false = lower.
+    uint8 percentage IN,        ///< The battery charge percentage.
+    uint8 percentageTrigger IN, ///< The percentage threshold that triggered this notification.
+    bool isHighLevel IN         ///< true = percentage is higher than trigger level, false = lower.
 );
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Register a callback function to be called when the Percentage Level changes as follows:
- *
- * If the level goes above levelHigh raise an alarm, if the level goes below levelLow raise
- * an alarm.
+ * Register a callback function to be called the battery level goes above levelHigh or
+ * below levelLow.
  */
 //--------------------------------------------------------------------------------------------------
 EVENT LevelPercentage
 (
-	uint8 levelLow IN,              ///< Low percentage trigger threshold (0 = no low level alarm)
-	uint8 levelHigh IN,             ///< High percentage trigger threshold (>=100 means no high alm)
-	LevelPercentageHandler handler
+    uint8 levelLow IN,              ///< Low percentage trigger threshold (0 = no low level alarm)
+    uint8 levelHigh IN,             ///< High percentage trigger threshold (>=100 means no high alm)
+    LevelPercentageHandler handler
 );
 
 //--------------------------------------------------------------------------------------------------
@@ -265,7 +233,7 @@ EVENT LevelPercentage
 //--------------------------------------------------------------------------------------------------
 HANDLER HealthHandler
 (
-	HealthStatus health IN
+    HealthStatus health IN
 );
 
 //--------------------------------------------------------------------------------------------------
@@ -275,7 +243,7 @@ HANDLER HealthHandler
 //--------------------------------------------------------------------------------------------------
 EVENT HealthChange
 (
-	HealthHandler handler
+    HealthHandler handler
 );
 
 //--------------------------------------------------------------------------------------------------
@@ -285,18 +253,15 @@ EVENT HealthChange
 //--------------------------------------------------------------------------------------------------
 HANDLER ChargingStatusHandler
 (
-	ChargingStatus condition IN
+    ChargingStatus condition IN
 );
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Register a callback function to be called when there is achange in state of the battery Health
- * If the level goes above levelHigh raise an alarm, if the level goes below levelLow raise
- * an alarm
- *
+ * Register a callback function to be called when there is a change in battery charging status.
  */
 //--------------------------------------------------------------------------------------------------
 EVENT ChargingStatusChange
 (
-	ChargingStatusHandler handler
+    ChargingStatusHandler handler
 );

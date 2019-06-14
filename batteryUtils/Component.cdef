@@ -1,0 +1,12 @@
+provides:
+{
+    headerDir:
+    {
+        $CURDIR
+    }
+}
+
+sources:
+{
+    batteryUtils.c
+}

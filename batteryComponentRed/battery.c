@@ -1211,8 +1211,6 @@ static void SetPeriod
 //--------------------------------------------------------------------------------------------------
 /**
  * Set the battery technology as set by the battery manufacturer
- *
- * @note this function sets the battery parameters and although is optional but is good to have
  */
 //--------------------------------------------------------------------------------------------------
 void ma_adminbattery_SetTechnology

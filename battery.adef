@@ -1,13 +1,12 @@
-version: 1.0
 sandboxed: false
 start: auto
 
 executables:
 {
     #if ${MANGOH_BOARD} = red
-    battery = (  batteryComponentRed )
+        battery = (  batteryComponentRed )
     #elif ${MANGOH_BOARD} = yellow
-    battery = ( batteryComponentYellow )
+        battery = ( batteryComponentYellow )
     #endif
 }
 
@@ -23,31 +22,15 @@ processes:
     }
     faultAction: stopApp
 }
-requires:
-{
-    configTree:
-    {
-        [rw] .
-    }
-}
 
 extern:
 {
     #if ${MANGOH_BOARD} = red
-    battery.batteryComponentRed.ma_battery
-    battery.batteryComponentRed.ma_adminbattery
+        battery.batteryComponentRed.ma_battery
+        battery.batteryComponentRed.ma_adminbattery
+        battery.batteryComponentRed.dhubIO
     #elif ${MANGOH_BOARD} = yellow
-    battery.batteryComponentYellow.ma_battery
-    battery.batteryComponentYellow.ma_adminbattery
-    #endif
-}
-
-bindings:
-{
-    
-    #if ${MANGOH_BOARD} = red
-    battery.batteryComponentRed.dhubIO -> dataHub.io
-    #elif ${MANGOH_BOARD} = yellow
-    battery.batteryComponentYellow.dhubIO -> dataHub.io
+        battery.batteryComponentYellow.ma_battery
+        battery.periodicSensor.dhubIO
     #endif
 }

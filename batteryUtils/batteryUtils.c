@@ -157,3 +157,8 @@ le_result_t util_WriteIntToFile
 done:
     return r;
 }
+
+
+COMPONENT_INIT
+{
+}
