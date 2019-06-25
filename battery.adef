@@ -20,7 +20,7 @@ processes:
     {
         ( battery )
     }
-    faultAction: stopApp
+    faultAction: restart
 }
 
 extern:
