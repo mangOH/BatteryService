@@ -524,6 +524,12 @@ static ma_battery_ChargingStatus_t ReadChargingStatus
         {
             return MA_BATTERY_FULL;
         }
+        else if (strcmp(chargingStatus, "Not charging") == 0)
+        {
+            // In this case, something is wrong that is preventing the battery from charging.
+            // E.g., the thermistor is reporting that the battery is too hot or too cold.
+            return MA_BATTERY_CHARGEERROR;
+        }
         else
         {
             LE_ERROR("Unrecognized charging status '%s'.", chargingStatus);
@@ -535,7 +541,7 @@ static ma_battery_ChargingStatus_t ReadChargingStatus
     {
         LE_ERROR("failed to read the charging status (%s).", LE_RESULT_TXT(r));
 
-        return MA_BATTERY_CHARGEERROR;
+        return MA_BATTERY_HEALTHUNDEFINED;
     }
 }
 
