@@ -81,9 +81,10 @@ ENUM ChargingStatus
                    ///< there is a charge fault.  It could also be discharging when in
                    ///< "supplement mode" but there is no way to tell when it's in that mode.
     CHARGING,      ///< Battery is being charged
+    NOT_CHARGING,  ///< Battery is not being charged or discharged
     FULL,          ///< Battery is fully charged
-    CHARGEUNDEFINED,     ///< Battery condition is not defined
-    CHARGEERROR,         ///< Error
+    CHARGING_UNKNOWN, ///< Battery charging status is not known
+    CHARGING_ERROR,   ///< Error in getting the charging status
 };
 
 
@@ -100,9 +101,9 @@ ENUM HealthStatus
     GOOD,            ///< Battery is in good health
     COLD,            ///< Battery is cold and cannot charge. Check datasheet
     HOT,             ///< Battery is hot and cannot charge.  Check datasheet
-    HEALTHUNDEFINED, ///< Battery health not defined
-    HEALTHERROR,     ///< Error in getting health
     DISCONNECTED,    ///< Battery is not connected.
+    HEALTH_UNKNOWN,  ///< Battery health is not known
+    HEALTH_ERROR,    ///< Error in getting health
 };
 
 
