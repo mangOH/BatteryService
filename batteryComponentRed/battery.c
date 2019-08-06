@@ -1,5 +1,4 @@
 /**
- *
  * @file batteryService.c
  *
  * This file provides control and monitoring of the power supply battery via the @ref c_battery and
@@ -80,7 +79,7 @@ static uint32_t PollingPeriod = DEFAULT_BATTERY_SAMPLE_INTERVAL_MS;
 static int32_t Capacity = -1;
 
 /// The charging status of the battery.
-static ma_battery_ChargingStatus_t ChargingStatus = MA_BATTERY_CHARGEUNDEFINED;
+static ma_battery_ChargingStatus_t ChargingStatus = MA_BATTERY_CHARGING_UNKNOWN;
 
 /// The last read value of the Charge Counter.  If counting up or down, a battery is connected.
 static int32_t ChargeCounter = 0;
@@ -176,9 +175,9 @@ static const char* GetHealthStr
         case MA_BATTERY_GOOD:               return "good";
         case MA_BATTERY_COLD:               return "cold";
         case MA_BATTERY_HOT:                return "hot";
-        case MA_BATTERY_HEALTHUNDEFINED:    return "undefined";
-        case MA_BATTERY_HEALTHERROR:        return "error";
         case MA_BATTERY_DISCONNECTED:       return "disconnected";
+        case MA_BATTERY_HEALTH_UNKNOWN:     return "unknown";
+        case MA_BATTERY_HEALTH_ERROR:       return "error";
     }
 
     LE_CRIT("Unexpected health code %d.", healthCode);
@@ -340,7 +339,7 @@ static void ReportChargingStatusChange
     void
 )
 {
-    static ma_battery_ChargingStatus_t oldStatus = MA_BATTERY_CHARGEUNDEFINED;
+    static ma_battery_ChargingStatus_t oldStatus = MA_BATTERY_CHARGING_UNKNOWN;
 
     ma_battery_ChargingStatus_t chargingStatus = ma_battery_GetChargingStatus();
 
@@ -429,7 +428,7 @@ static void ReportHealthStatusChange
     ma_battery_HealthStatus_t healthStatus
 )
 {
-    static ma_battery_HealthStatus_t oldStatus = MA_BATTERY_HEALTHUNDEFINED;
+    static ma_battery_HealthStatus_t oldStatus = MA_BATTERY_HEALTH_UNKNOWN;
 
     if (oldStatus != healthStatus)
     {
@@ -574,8 +573,8 @@ static void PushToDataHub
     // If the health is not known, or the battery is definitely disconnected, then the
     // charge levels are meaningless and should be zeroed.
     if (   (healthStatus == MA_BATTERY_DISCONNECTED)
-        || (healthStatus == MA_BATTERY_HEALTHERROR)
-        || (healthStatus == MA_BATTERY_HEALTHUNDEFINED)  )
+        || (healthStatus == MA_BATTERY_HEALTH_ERROR)
+        || (healthStatus == MA_BATTERY_HEALTH_UNKNOWN)  )
     {
         mAh = 0;
         percentage = 0;
@@ -722,18 +721,26 @@ static void ReadChargingStatus
         {
             ChargingStatus = MA_BATTERY_FULL;
         }
+        else if (strcmp(chargingStatus, "Not charging") == 0)
+        {
+            ChargingStatus = MA_BATTERY_NOT_CHARGING;
+        }
+        else if (strcmp(chargingStatus, "Unknown") == 0)
+        {
+            ChargingStatus = MA_BATTERY_CHARGING_UNKNOWN;
+        }
         else
         {
             LE_ERROR("Unrecognized charging status '%s'.", chargingStatus);
 
-            ChargingStatus = MA_BATTERY_HEALTHUNDEFINED;
+            ChargingStatus = MA_BATTERY_CHARGING_ERROR;
         }
     }
     else
     {
         LE_ERROR("failed to read the charging status (%s).", LE_RESULT_TXT(r));
 
-        ChargingStatus = MA_BATTERY_CHARGEERROR;
+        ChargingStatus = MA_BATTERY_CHARGING_ERROR;
     }
 }
 
@@ -1342,7 +1349,7 @@ ma_battery_HealthStatus_t ma_battery_GetHealthStatus
         {
             if ((State != STATE_CALIBRATING) && (State != STATE_NOMINAL))
             {
-                return MA_BATTERY_HEALTHUNDEFINED;
+                return MA_BATTERY_HEALTH_UNKNOWN;
             }
             return MA_BATTERY_GOOD;
         }
@@ -1362,12 +1369,12 @@ ma_battery_HealthStatus_t ma_battery_GetHealthStatus
         else
         {
             LE_ERROR("Unrecognized health string from driver: '%s'.", healthValue);
-            return MA_BATTERY_HEALTHUNDEFINED;
+            return MA_BATTERY_HEALTH_UNKNOWN;
         }
     }
     else
     {
-        return MA_BATTERY_HEALTHERROR;
+        return MA_BATTERY_HEALTH_ERROR;
     }
 }
 
@@ -1391,7 +1398,7 @@ ma_battery_ChargingStatus_t ma_battery_GetChargingStatus
         case STATE_DETECTING_PRESENCE:
         case STATE_DISCONNECTED:
 
-            return MA_BATTERY_CHARGEUNDEFINED;
+            return MA_BATTERY_CHARGING_UNKNOWN;
 
         case STATE_CALIBRATING:
         case STATE_NOMINAL:

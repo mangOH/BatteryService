@@ -110,9 +110,9 @@ static const char* GetHealthStr
         case MA_BATTERY_GOOD:               return "good";
         case MA_BATTERY_COLD:               return "cold";
         case MA_BATTERY_HOT:                return "hot";
-        case MA_BATTERY_HEALTHUNDEFINED:    return "undefined";
-        case MA_BATTERY_HEALTHERROR:        return "error";
         case MA_BATTERY_DISCONNECTED:       return "disconnected";
+        case MA_BATTERY_HEALTH_UNKNOWN:     return "unknown";
+        case MA_BATTERY_HEALTH_ERROR:       return "error";
     }
 
     LE_CRIT("Unexpected health code %d.", healthCode);
@@ -319,7 +319,7 @@ static void ReportChargingStatusChange
     ma_battery_ChargingStatus_t status
 )
 {
-    static ma_battery_ChargingStatus_t oldStatus = MA_BATTERY_CHARGEUNDEFINED;
+    static ma_battery_ChargingStatus_t oldStatus = MA_BATTERY_CHARGING_UNKNOWN;
 
     if (oldStatus != status)
     {
@@ -409,7 +409,7 @@ static void ReportHealthStatusChange
     ma_battery_HealthStatus_t healthStatus
 )
 {
-    static ma_battery_HealthStatus_t oldStatus = MA_BATTERY_HEALTHUNDEFINED;
+    static ma_battery_HealthStatus_t oldStatus = MA_BATTERY_HEALTH_UNKNOWN;
 
     if (oldStatus != healthStatus)
     {
@@ -524,18 +524,26 @@ static ma_battery_ChargingStatus_t ReadChargingStatus
         {
             return MA_BATTERY_FULL;
         }
+        else if (strcmp(chargingStatus, "Not charging") == 0)
+        {
+            return MA_BATTERY_NOT_CHARGING;
+        }
+        else if (strcmp(chargingStatus, "Unknown") == 0)
+        {
+            return MA_BATTERY_CHARGING_UNKNOWN;
+        }
         else
         {
             LE_ERROR("Unrecognized charging status '%s'.", chargingStatus);
 
-            return MA_BATTERY_HEALTHUNDEFINED;
+            return MA_BATTERY_CHARGING_ERROR;
         }
     }
     else
     {
         LE_ERROR("failed to read the charging status (%s).", LE_RESULT_TXT(r));
 
-        return MA_BATTERY_CHARGEERROR;
+        return MA_BATTERY_CHARGING_ERROR;
     }
 }
 
@@ -610,12 +618,12 @@ static ma_battery_HealthStatus_t ReadHealthStatus
         else
         {
             LE_ERROR("Unrecognized health string from driver: '%s'.", healthValue);
-            return MA_BATTERY_HEALTHUNDEFINED;
+            return MA_BATTERY_HEALTH_ERROR;
         }
     }
     else
     {
-        return MA_BATTERY_HEALTHERROR;
+        return MA_BATTERY_HEALTH_ERROR;
     }
 }
 
@@ -648,7 +656,7 @@ ma_battery_ChargingStatus_t ma_battery_GetChargingStatus
     void
 )
 {
-    ma_battery_ChargingStatus_t status = MA_BATTERY_CHARGEUNDEFINED;
+    ma_battery_ChargingStatus_t status = MA_BATTERY_CHARGING_UNKNOWN;
 
     if (BatteryPresent())
     {
@@ -920,7 +928,7 @@ static void PushToDataHub
 //--------------------------------------------------------------------------------------------------
 {
     ma_battery_HealthStatus_t healthStatus = MA_BATTERY_DISCONNECTED;
-    ma_battery_ChargingStatus_t chargingStatus = MA_BATTERY_CHARGEUNDEFINED;
+    ma_battery_ChargingStatus_t chargingStatus = MA_BATTERY_CHARGING_UNKNOWN;
     bool isCharging = false;
     uint charge = 0;
     uint percentage = 0;
@@ -996,7 +1004,7 @@ static void AlarmCheckTimerExpiryHandler
 )
 {
     ma_battery_HealthStatus_t healthStatus = MA_BATTERY_DISCONNECTED;
-    ma_battery_ChargingStatus_t chargingStatus = MA_BATTERY_CHARGEUNDEFINED;
+    ma_battery_ChargingStatus_t chargingStatus = MA_BATTERY_CHARGING_UNKNOWN;
     uint percentage = 0;
 
     if (BatteryPresent())
